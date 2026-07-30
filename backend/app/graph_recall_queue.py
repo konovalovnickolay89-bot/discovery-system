@@ -28,6 +28,8 @@ from .kitchen_repo import get_consultation, get_dish, get_ingredient, get_produc
 
 log = logging.getLogger("casual_board.graph_recall")
 _wake = threading.Event()
+_reaper_started = False
+_reaper_stop = threading.Event()
 
 
 def _now() -> datetime:
@@ -48,6 +50,10 @@ def graph_recall_secret() -> str:
     if not tok:
         return s.bridge_token.strip() or s.api_token.strip() or "open-dev-graph-recall"
     return tok
+
+
+def graph_recall_lease_ttl_s() -> float:
+    return float(get_settings().graph_recall_lease_ttl_s)
 
 
 def canonical_result_payload(
@@ -91,10 +97,8 @@ def verify_result(body: GraphRecallResultRequest) -> bool:
 
 
 def enqueue_graph_recall(c: CookConsultation) -> str:
-    """Queue a Graph Recall job for a consultation (server-side only)."""
     job_id = f"gr-{uuid4().hex[:12]}"
     now = _now()
-    # payload for worker: validated state + linked records
     lots = [get_produce(i).model_dump(mode="json") for i in c.produce_lot_ids if get_produce(i)]
     ings = [get_ingredient(i).model_dump(mode="json") for i in c.ingredient_ids if get_ingredient(i)]
     dish = get_dish(c.dish_id).model_dump(mode="json") if c.dish_id and get_dish(c.dish_id) else None
@@ -129,10 +133,10 @@ def enqueue_graph_recall(c: CookConsultation) -> str:
 
 
 def long_poll_lease(*, worker_id: str, timeout_s: float = 25.0) -> GraphRecallLeaseResponse:
-    lease_s = float(get_settings().lease_ttl_s)
+    lease_s = graph_recall_lease_ttl_s()
     deadline = time.monotonic() + max(0.5, timeout_s)
     while True:
-        _expire()
+        reap_expired_leases()
         row = get_conn().execute(
             "SELECT * FROM graph_recall_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
@@ -149,7 +153,6 @@ def long_poll_lease(*, worker_id: str, timeout_s: float = 25.0) -> GraphRecallLe
             )
             get_conn().commit()
             if cur.rowcount == 1:
-                # mark consultation working
                 c = get_consultation(row["consultation_id"])
                 if c:
                     c = c.model_copy(
@@ -158,7 +161,14 @@ def long_poll_lease(*, worker_id: str, timeout_s: float = 25.0) -> GraphRecallLe
                             "task_status": CookTaskStatus.kitchen_memory_working,
                             "updated_at": now,
                             "audit": list(c.audit)
-                            + [{"at": now.isoformat(), "event": "kitchen_memory_working", "worker": worker_id}],
+                            + [
+                                {
+                                    "at": now.isoformat(),
+                                    "event": "kitchen_memory_working",
+                                    "worker": worker_id,
+                                    "lease_ttl_s": lease_s,
+                                }
+                            ],
                         }
                     )
                     save_consultation(c)
@@ -169,6 +179,7 @@ def long_poll_lease(*, worker_id: str, timeout_s: float = 25.0) -> GraphRecallLe
                     "lease_nonce": nonce,
                     "leased_by": worker_id,
                     "lease_expires_at": _iso(exp),
+                    "lease_ttl_s": lease_s,
                     "payload": loads(row["payload_json"]),
                 }
                 return GraphRecallLeaseResponse(job=job, wait_ms=0)
@@ -180,22 +191,93 @@ def long_poll_lease(*, worker_id: str, timeout_s: float = 25.0) -> GraphRecallLe
         _wake.wait(timeout=min(1.0, remaining))
 
 
-def _expire() -> None:
+def reap_expired_leases() -> int:
+    """
+    Move expired Graph Recall leases back to queued.
+    Works without a worker (periodic + on status read).
+    Returns number of jobs requeued.
+    """
     now = _now()
     rows = get_conn().execute(
         "SELECT * FROM graph_recall_jobs WHERE status='leased' AND lease_expires_at IS NOT NULL"
     ).fetchall()
+    n = 0
     for row in rows:
         exp = _parse(row["lease_expires_at"])
-        if exp and exp < now:
-            get_conn().execute(
-                """
-                UPDATE graph_recall_jobs SET status='queued', leased_by=NULL, lease_nonce=NULL,
-                lease_expires_at=NULL, message='lease expired', updated_at=? WHERE id=?
-                """,
-                (_iso(now), row["id"]),
+        if not exp or exp >= now:
+            continue
+        # Invalidate lease so late results cannot complete
+        cur = get_conn().execute(
+            """
+            UPDATE graph_recall_jobs SET status='queued', leased_by=NULL, lease_nonce=NULL,
+            lease_expires_at=NULL, message='lease expired — requeued', updated_at=?
+            WHERE id=? AND status='leased'
+            """,
+            (_iso(now), row["id"]),
+        )
+        get_conn().commit()
+        if cur.rowcount != 1:
+            continue
+        n += 1
+        c = get_consultation(row["consultation_id"])
+        if not c:
+            continue
+        # Only flip if still working/leased from kitchen memory perspective
+        if c.graph_recall_status in {
+            GraphRecallStatus.leased,
+            GraphRecallStatus.queued,
+        } or c.task_status == CookTaskStatus.kitchen_memory_working:
+            c = c.model_copy(
+                update={
+                    "graph_recall_status": GraphRecallStatus.queued,
+                    "task_status": CookTaskStatus.kitchen_memory_queued,
+                    "updated_at": now,
+                    "blocked_reason": None,
+                    "audit": list(c.audit)
+                    + [
+                        {
+                            "at": now.isoformat(),
+                            "event": "kitchen_memory_lease_expired",
+                            "reason": "lease expired — requeued for another worker attempt",
+                            "job_id": row["id"],
+                        }
+                    ],
+                }
             )
-            get_conn().commit()
+            save_consultation(c)  # emits cook_task WS
+            log.info(
+                "graph_recall_lease_expired consultation_id=%s job_id=%s",
+                c.id,
+                row["id"],
+            )
+    return n
+
+
+def start_reaper_background() -> None:
+    """Daemon thread: reaps expired GR leases even when no worker is connected."""
+    global _reaper_started
+    if _reaper_started:
+        return
+    _reaper_started = True
+    _reaper_stop.clear()
+
+    def _loop() -> None:
+        while not _reaper_stop.is_set():
+            try:
+                reap_expired_leases()
+            except Exception as e:  # noqa: BLE001
+                log.warning("graph_recall_reaper_error category=%s", type(e).__name__)
+            interval = max(5, int(get_settings().graph_recall_reap_interval_s))
+            _reaper_stop.wait(timeout=interval)
+
+    t = threading.Thread(target=_loop, name="graph-recall-reaper", daemon=True)
+    t.start()
+
+
+def stop_reaper_background() -> None:
+    global _reaper_started
+    _reaper_stop.set()
+    _reaper_started = False
 
 
 def complete_result(body: GraphRecallResultRequest) -> CookConsultation:
@@ -205,6 +287,9 @@ def complete_result(body: GraphRecallResultRequest) -> CookConsultation:
         raise HTTPException(422, "worker_id and lease_nonce required")
     if not verify_result(body):
         raise HTTPException(401, "invalid graph recall signature")
+
+    # Always reap first so expired leases cannot complete
+    reap_expired_leases()
 
     c = get_conn()
     if c.execute("SELECT 1 FROM graph_recall_nonces WHERE nonce=?", (body.lease_nonce,)).fetchone():
@@ -222,6 +307,7 @@ def complete_result(body: GraphRecallResultRequest) -> CookConsultation:
         raise HTTPException(403, "lease_nonce mismatch")
     exp = _parse(row["lease_expires_at"])
     if exp and exp < _now():
+        reap_expired_leases()
         raise HTTPException(409, "lease expired")
 
     now = _now()
@@ -232,7 +318,7 @@ def complete_result(body: GraphRecallResultRequest) -> CookConsultation:
     c.execute(
         """
         UPDATE graph_recall_jobs SET status=?, result_json=?, message=?, leased_by=NULL,
-        lease_nonce=NULL, lease_expires_at=NULL, updated_at=? WHERE id=?
+        lease_nonce=NULL, lease_expires_at=NULL, updated_at=? WHERE id=? AND status='leased'
         """,
         (
             body.status,
@@ -249,19 +335,16 @@ def complete_result(body: GraphRecallResultRequest) -> CookConsultation:
         raise HTTPException(404, "consultation not found")
 
     if body.status == "failed":
+        plan = consultation.local_safety_plan
+        rejected = isinstance(plan, dict) and plan.get("rejected")
         consultation = consultation.model_copy(
             update={
                 "graph_recall_status": GraphRecallStatus.failed,
-                "task_status": CookTaskStatus.needs_review
-                if not (
-                    isinstance(consultation.local_safety_plan, dict)
-                    and consultation.local_safety_plan.get("rejected")
-                )
-                else CookTaskStatus.blocked,
+                "task_status": CookTaskStatus.blocked if rejected else CookTaskStatus.needs_review,
                 "updated_at": now,
                 "blocked_reason": body.message or "Kitchen memory failed",
                 "audit": list(consultation.audit)
-                + [{"at": now.isoformat(), "event": "kitchen_memory_failed", "message": body.message}],
+                + [{"at": now.isoformat(), "event": "kitchen_memory_failed", "category": "worker_failed"}],
             }
         )
         return save_consultation(consultation)

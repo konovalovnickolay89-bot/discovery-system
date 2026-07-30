@@ -34,7 +34,6 @@ class Settings(BaseSettings):
 
     api_token: str = Field(default="", alias="CASUAL_BOARD_TOKEN")
     bridge_token: str = Field(default="", alias="CASUAL_BOARD_BRIDGE_TOKEN")
-    # Graph Recall culinary worker — distinct from host bridge. Never browser.
     graph_recall_token: str = Field(default="", alias="CASUAL_BOARD_GRAPH_RECALL_TOKEN")
     ui_password: str = Field(default="", alias="CASUAL_BOARD_UI_PASSWORD")
     session_secret: str = Field(default="", alias="CASUAL_BOARD_SESSION_SECRET")
@@ -53,13 +52,22 @@ class Settings(BaseSettings):
     enable_pydantic_ai: bool = Field(default=True, alias="CASUAL_BOARD_ENABLE_AI")
     ai_provider: str = Field(default="function", alias="CASUAL_BOARD_AI_PROVIDER")
     ai_model: str = Field(default="", alias="CASUAL_BOARD_AI_MODEL")
+    # Host bridge lease (short)
     lease_ttl_s: int = Field(default=60, alias="CASUAL_BOARD_LEASE_TTL_S")
+    # Graph Recall culinary worker lease (long enough for Hermes)
+    graph_recall_lease_ttl_s: int = Field(default=300, alias="CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S")
+    graph_recall_reap_interval_s: int = Field(default=15, alias="CASUAL_BOARD_GRAPH_RECALL_REAP_INTERVAL_S")
     strict_env: bool = Field(default=False, alias="CASUAL_BOARD_STRICT_ENV")
 
     @field_validator("app_env")
     @classmethod
     def normalize_env(cls, v: str) -> str:
         return (v or "development").strip().lower()
+
+    @field_validator("graph_recall_lease_ttl_s")
+    @classmethod
+    def min_gr_lease(cls, v: int) -> int:
+        return max(300, int(v or 300))
 
     @property
     def is_production(self) -> bool:

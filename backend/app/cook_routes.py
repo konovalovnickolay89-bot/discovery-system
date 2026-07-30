@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .auth import require_graph_recall
 from .cook_studio import create_consultation
-from .graph_recall_queue import complete_result, long_poll_lease
+from .graph_recall_queue import complete_result, long_poll_lease, reap_expired_leases
 from .kitchen_models import (
     CookConsultation,
     CookConsultationCreate,
@@ -125,11 +125,13 @@ def api_list_consultations(
     active: bool = Query(default=False),
     _s: dict = Depends(require_session),
 ):
+    reap_expired_leases()
     return list_active_consultations() if active else list_consultations()
 
 
 @router.get("/v1/cook/consultations/{cid}", response_model=CookConsultation)
 def api_get_consultation(cid: str, _s: dict = Depends(require_session)):
+    reap_expired_leases()
     c = get_consultation(cid)
     if not c:
         raise HTTPException(404, "consultation not found")

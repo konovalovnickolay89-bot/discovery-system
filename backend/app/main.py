@@ -19,6 +19,7 @@ from .auth import require_bridge, require_owner
 from .commands import approve_action, execute_command
 from .config import GROK_ME_WEB_ORIGIN, get_settings, validate_or_exit
 from .db import connect
+from .graph_recall_queue import start_reaper_background, stop_reaper_background
 from .logging_config import setup_logging
 from .models import (
     ActionRecord,
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     connect(settings.sqlite_path)
     get_store().get()
+    start_reaper_background()
     log.info(
         "startup version=%s env=%s host=%s cors=%s",
         __version__,
