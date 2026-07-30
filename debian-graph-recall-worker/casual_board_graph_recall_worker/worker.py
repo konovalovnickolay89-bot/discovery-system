@@ -1,4 +1,4 @@
-"""Process one Graph Recall lease at a time."""
+"""Process one Graph Recall lease: logseq-graph recall → Hermes synthesis → signed result."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import Any
 from .client import GraphRecallClient
 from .hermes_runner import HermesRunnerFn, run_hermes
 from .prompt import build_prompt
+from .retrieval import RecallRunnerFn, run_logseq_recall
 
 log = logging.getLogger("graph_recall_worker")
 
 
 def _safe_log(consultation_id: str, mode: str, **fields: Any) -> None:
-    # Never log tokens, prompts, raw inputs
     parts = [f"consultation_id={consultation_id}", f"mode={mode}"]
     for k, v in fields.items():
         if k.lower() in {"token", "password", "secret", "prompt", "authorization", "bearer"}:
@@ -31,15 +31,21 @@ class GraphRecallWorker:
         hermes_timeout_s: int = 240,
         lease_poll_s: float = 25.0,
         hermes_runner: HermesRunnerFn | None = None,
+        recall_runner: RecallRunnerFn | None = None,
         home: str = "/home/discovery-system",
         hermes_home: str = "/home/discovery-system/.hermes/profiles/graph-recall",
+        hermes_toolsets: str = "",
+        graph_root: str = "/home/discovery-system/Logseq/graph",
     ) -> None:
         self.client = client
         self.hermes_timeout_s = hermes_timeout_s
         self.lease_poll_s = lease_poll_s
         self.hermes_runner = hermes_runner
+        self.recall_runner = recall_runner
         self.home = home
         self.hermes_home = hermes_home
+        self.hermes_toolsets = hermes_toolsets
+        self.graph_root = graph_root
 
     def process_job(self, job: dict[str, Any]) -> dict[str, Any]:
         cid = str(job.get("consultation_id") or "")
@@ -50,12 +56,20 @@ class GraphRecallWorker:
         t0 = time.monotonic()
         _safe_log(cid, mode, state="leased", job_id=job.get("id"))
 
-        # Lease validity window: stop retries if exceeded
         lease_ttl = float(job.get("lease_ttl_s") or 300)
-        lease_deadline = t0 + max(30.0, lease_ttl - 15.0)  # finish before API expiry
+        lease_deadline = t0 + max(30.0, lease_ttl - 15.0)
 
-        prompt = build_prompt(payload)
-        # Single attempt if near deadline; else one retry only while lease valid
+        # 1) Worker-owned read-only retrieval (not Hermes tools)
+        retrieved = run_logseq_recall(
+            payload,
+            graph_root=self.graph_root,
+            timeout_s=30,
+            runner=self.recall_runner,
+        )
+        _safe_log(cid, mode, state="retrieved", n=len(retrieved))
+
+        prompt = build_prompt(payload, retrieved_context=retrieved)
+
         attempts = 0
         last_cat = "hermes_failure"
         while attempts < 2 and time.monotonic() < lease_deadline:
@@ -69,35 +83,58 @@ class GraphRecallWorker:
                     "HOME": self.home,
                     "HERMES_HOME": self.hermes_home,
                 },
+                toolsets=self.hermes_toolsets,
                 runner=self.hermes_runner,
             )
-            # Assert restricted toolset in command
-            if result.command and "--toolset" not in result.command:
-                last_cat = "toolset_missing"
+            if result.command is None and result.error_category == "invalid_cli":
+                last_cat = "invalid_cli"
                 break
-            if result.command and "graph-recall-read-first" not in result.command:
-                last_cat = "toolset_not_restricted"
-                break
+            if result.command:
+                # Enforce real CLI shape
+                if "--toolset" in result.command or "--timeout" in result.command:
+                    last_cat = "invalid_cli"
+                    break
+                if "-z" not in result.command and "--oneshot" not in result.command:
+                    last_cat = "invalid_cli"
+                    break
+                # No terminal/file toolsets
+                if "--toolsets" in result.command:
+                    i = result.command.index("--toolsets")
+                    tools = (result.command[i + 1] if i + 1 < len(result.command) else "").lower()
+                    if any(b in tools for b in ("terminal", "shell", "file", "filesystem")):
+                        last_cat = "toolset_not_restricted"
+                        break
             if result.ok and result.parsed:
-                duration = time.monotonic() - t0
-                _safe_log(
-                    cid,
-                    mode,
-                    state="completed",
-                    duration_s=round(duration, 2),
-                    mem_n=len(result.parsed.get("kitchen_memory") or []),
-                )
-                # Map kitchen_memory for API (excerpt field)
-                mem = []
-                for m in result.parsed.get("kitchen_memory") or []:
-                    mem.append(
+                # Prefer retrieved-backed memory; merge Hermes synthesis findings for same paths
+                mem = result.parsed.get("kitchen_memory") or []
+                if not mem and retrieved:
+                    mem = [
                         {
                             "title": m.get("title"),
                             "path": m.get("path"),
                             "relevance": m.get("relevance"),
                             "excerpt": m.get("finding") or m.get("excerpt") or "",
                         }
-                    )
+                        for m in retrieved
+                    ]
+                else:
+                    mem = [
+                        {
+                            "title": m.get("title"),
+                            "path": m.get("path"),
+                            "relevance": m.get("relevance"),
+                            "excerpt": m.get("finding") or m.get("excerpt") or "",
+                        }
+                        for m in mem
+                    ]
+                duration = time.monotonic() - t0
+                _safe_log(
+                    cid,
+                    mode,
+                    state="completed",
+                    duration_s=round(duration, 2),
+                    mem_n=len(mem),
+                )
                 return self.client.post_result(
                     consultation_id=cid,
                     lease_nonce=nonce,
@@ -108,14 +145,13 @@ class GraphRecallWorker:
                     proposed_guest_service=False,
                 )
             last_cat = result.error_category or "hermes_failure"
-            if last_cat == "timeout":
-                break  # do not retry timeout near lease edge without time
+            if last_cat in {"timeout", "invalid_cli"}:
+                break
             if time.monotonic() >= lease_deadline:
                 break
 
         duration = time.monotonic() - t0
         _safe_log(cid, mode, state="failed", duration_s=round(duration, 2), category=last_cat)
-        # Always submit one signed failure — never silent loss
         try:
             return self.client.post_result(
                 consultation_id=cid,

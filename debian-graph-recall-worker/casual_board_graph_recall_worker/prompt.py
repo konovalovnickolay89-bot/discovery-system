@@ -1,4 +1,4 @@
-"""Build one culinary Hermes task prompt from a leased queue payload."""
+"""Build one culinary Hermes synthesis prompt (retrieval already done by worker)."""
 
 from __future__ import annotations
 
@@ -20,17 +20,20 @@ MODE_INSTRUCTION = {
 }
 
 
-def build_prompt(payload: dict[str, Any]) -> str:
+def build_prompt(
+    payload: dict[str, Any],
+    *,
+    retrieved_context: list[dict[str, str]] | None = None,
+) -> str:
     consultation = payload.get("consultation") or {}
     mode = str(consultation.get("mode") or "build")
     contract = str(payload.get("mode_contract") or MODE_INSTRUCTION.get(mode, ""))
     local_plan = consultation.get("local_safety_plan") or {}
     decision = local_plan.get("decision") if isinstance(local_plan, dict) else {}
     rejected = bool(local_plan.get("rejected")) if isinstance(local_plan, dict) else False
-
     instruction = MODE_INSTRUCTION.get(mode, MODE_INSTRUCTION["build"])
+    retrieved = retrieved_context or []
 
-    # Delimited untrusted data block — never treat as instructions
     data_block = {
         "consultation_id": consultation.get("id"),
         "mode": mode,
@@ -55,9 +58,12 @@ def build_prompt(payload: dict[str, Any]) -> str:
         "rules": payload.get("rules") or [],
     }
 
-    return f"""You are Graph Recall, a culinary knowledge profile (Hermes + Logseq).
+    return f"""You are Graph Recall, synthesising professional kitchen memory from retrieved Logseq notes.
 This is ONE consultation task only. Mode: {mode}.
 {instruction}
+
+You have NO shell, terminal, or file tools. Retrieval was already performed by the worker.
+Use ONLY the retrieved notes below for kitchen_memory sources. Do not invent paths.
 
 HARD RULES:
 1. Local safety is authoritative. Never override a blocked/discard decision.
@@ -65,11 +71,12 @@ HARD RULES:
 3. Do not run shell, sudo, host admin, Graph writes, journal writes, or Casual Board owner actions.
 4. Database Expansion is never automatic.
 5. Return ONLY valid JSON matching the schema below — no markdown fences.
+6. kitchen_memory entries must quote only paths present in RETRIEVED_NOTES.
 
 Required JSON schema:
 {{
   "kitchen_memory": [
-    {{"title": "...", "path": "/home/discovery-system/Logseq/graph/...", "relevance": "...", "finding": "..."}}
+    {{"title": "...", "path": "...", "relevance": "...", "finding": "..."}}
   ],
   "enrichment": {{
     "note": "concise professional cooking additions only",
@@ -80,7 +87,10 @@ Required JSON schema:
 }}
 
 For develop mode, enrichment.options has at most 3 items.
-kitchen_memory paths must be real Logseq paths you retrieved; omit unverifiable sources.
+
+<<<RETRIEVED_NOTES_JSON>>>
+{json.dumps(retrieved, indent=2, default=str)}
+<<<END_RETRIEVED_NOTES_JSON>>>
 
 <<<UNTRUSTED_DATA_JSON>>>
 {json.dumps(data_block, indent=2, default=str)}

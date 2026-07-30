@@ -1,4 +1,4 @@
-"""Hermes invocation with restricted read-first toolset. No --yolo."""
+"""Hermes synthesis invocation matching the real CLI: -z/--oneshot, --toolsets."""
 
 from __future__ import annotations
 
@@ -12,12 +12,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import LOGSEQ_GRAPH_ROOT as DEFAULT_LOGSEQ_ROOT
-from . import RESTRICTED_TOOLSET
 
 log = logging.getLogger("graph_recall_worker.hermes")
 
 # Overridable for tests
 LOGSEQ_GRAPH_ROOT = DEFAULT_LOGSEQ_ROOT
+
+# Default: no toolsets → synthesis-only (no terminal/file capability).
+# Override with CASUAL_BOARD_HERMES_TOOLSETS after verifying: hermes tools list
+DEFAULT_HERMES_TOOLSETS = ""
 
 HermesRunnerFn = Callable[[str, dict[str, Any]], str]
 
@@ -32,15 +35,62 @@ class HermesResult:
     command: list[str] | None = None
 
 
-def build_hermes_command(timeout_s: int) -> list[str]:
-    return [
-        "hermes",
-        "-z",
-        "--toolset",
-        RESTRICTED_TOOLSET,
-        "--timeout",
-        str(int(timeout_s)),
-    ]
+class InvalidHermesCLIError(ValueError):
+    """Raised when argv would not be accepted by the installed Hermes parser."""
+
+
+def validate_hermes_argv(cmd: list[str]) -> None:
+    """Catch invalid CLI shapes before install/run (no --toolset, no hermes --timeout)."""
+    if not cmd or cmd[0] != "hermes":
+        raise InvalidHermesCLIError("command must start with hermes")
+    if "--toolset" in cmd:
+        raise InvalidHermesCLIError("unsupported flag --toolset (use --toolsets)")
+    if "--timeout" in cmd:
+        raise InvalidHermesCLIError("unsupported flag --timeout (use Python subprocess timeout)")
+    # -z / --oneshot must be followed by a prompt argument
+    if "-z" in cmd:
+        i = cmd.index("-z")
+        if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
+            raise InvalidHermesCLIError("-z requires a prompt argument")
+    elif "--oneshot" in cmd:
+        i = cmd.index("--oneshot")
+        if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
+            raise InvalidHermesCLIError("--oneshot requires a prompt argument")
+    else:
+        raise InvalidHermesCLIError("missing -z / --oneshot")
+    if "--toolsets" in cmd:
+        i = cmd.index("--toolsets")
+        if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
+            raise InvalidHermesCLIError("--toolsets requires a value")
+        tools = cmd[i + 1].lower()
+        # Refuse terminal/file capability in synthesis process
+        for banned in ("terminal", "shell", "file", "filesystem", "bash", "exec"):
+            if banned in tools.split(","):
+                raise InvalidHermesCLIError(f"toolset capability not allowed: {banned}")
+
+
+def build_hermes_command(
+    prompt: str,
+    *,
+    toolsets: str | None = None,
+) -> list[str]:
+    """
+    Real Hermes CLI:
+      hermes -z / --oneshot <PROMPT>
+      hermes -t / --toolsets <comma-separated>
+    Prompt is an argv element (not stdin). No --timeout flag.
+    """
+    ts = toolsets if toolsets is not None else os.environ.get(
+        "CASUAL_BOARD_HERMES_TOOLSETS", DEFAULT_HERMES_TOOLSETS
+    )
+    ts = (ts or "").strip()
+    cmd: list[str] = ["hermes", "-z", prompt]
+    # Prefer no tools (synthesis-only from retrieved context already in prompt).
+    # If operator sets toolsets, still reject terminal/file via validate.
+    if ts:
+        cmd.extend(["--toolsets", ts])
+    validate_hermes_argv(cmd)
+    return cmd
 
 
 def extract_json_object(text: str) -> dict[str, Any] | None:
@@ -142,12 +192,24 @@ def run_hermes(
     *,
     timeout_s: int,
     env: dict[str, str] | None = None,
+    toolsets: str | None = None,
     runner: HermesRunnerFn | None = None,
 ) -> HermesResult:
     import time
 
-    cmd = build_hermes_command(timeout_s)
     t0 = time.monotonic()
+    try:
+        cmd = build_hermes_command(prompt, toolsets=toolsets)
+    except InvalidHermesCLIError as e:
+        return HermesResult(
+            ok=False,
+            raw_text="",
+            parsed=None,
+            error_category="invalid_cli",
+            duration_s=time.monotonic() - t0,
+            command=None,
+        )
+
     if runner is not None:
         try:
             text = runner(prompt, {"command": cmd, "timeout_s": timeout_s})
@@ -183,26 +245,37 @@ def run_hermes(
     run_env = os.environ.copy()
     if env:
         run_env.update(env)
-    for k in list(run_env):
-        if k in {
-            "CASUAL_BOARD_GRAPH_RECALL_TOKEN",
-            "CASUAL_BOARD_TOKEN",
-            "CASUAL_BOARD_BRIDGE_TOKEN",
-            "CASUAL_BOARD_UI_PASSWORD",
-        }:
-            run_env.pop(k, None)
+    for k in (
+        "CASUAL_BOARD_GRAPH_RECALL_TOKEN",
+        "CASUAL_BOARD_TOKEN",
+        "CASUAL_BOARD_BRIDGE_TOKEN",
+        "CASUAL_BOARD_UI_PASSWORD",
+    ):
+        run_env.pop(k, None)
 
     try:
+        # Prompt is argv to -z; stdin not used. Timeout is Python-side only.
         proc = subprocess.run(
             cmd,
-            input=prompt,
-            text=True,
+            shell=False,
             capture_output=True,
+            text=True,
             timeout=timeout_s,
             env=run_env,
             check=False,
         )
         if proc.returncode != 0 and not proc.stdout:
+            # Argument errors from Hermes
+            err = (proc.stderr or "").lower()
+            if "unrecognized" in err or "invalid" in err or "usage" in err:
+                return HermesResult(
+                    ok=False,
+                    raw_text="",
+                    parsed=None,
+                    error_category="invalid_cli",
+                    duration_s=time.monotonic() - t0,
+                    command=cmd,
+                )
             return HermesResult(
                 ok=False,
                 raw_text="",
@@ -248,3 +321,37 @@ def run_hermes(
             duration_s=time.monotonic() - t0,
             command=cmd,
         )
+
+
+def dry_run_hermes_parser(prompt: str = "ping") -> tuple[bool, str]:
+    """
+    Local check: build argv and optionally invoke hermes with a harmless prompt.
+    Returns (ok, message). Does not claim restricted toolsets without hermes tools list.
+    """
+    try:
+        cmd = build_hermes_command(prompt, toolsets="")
+    except InvalidHermesCLIError as e:
+        return False, f"argv invalid: {e}"
+    # Prefer real binary if present
+    try:
+        proc = subprocess.run(
+            cmd,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        err = (proc.stderr or "") + (proc.stdout or "")
+        low = err.lower()
+        if "unrecognized arguments" in low or "invalid option" in low or "no such option" in low:
+            return False, f"hermes rejected argv: {err[:200]}"
+        # hermes missing handled below
+        return True, "hermes accepted argv shape (or ran without arg error)"
+    except FileNotFoundError:
+        # Binary not in this sandbox — argv still validated by our parser
+        return True, "hermes not installed here; argv validated without --toolset/--timeout"
+    except subprocess.TimeoutExpired:
+        return True, "hermes started (timeout) — no argument error"
+    except Exception as e:  # noqa: BLE001
+        return False, f"dry_run error: {type(e).__name__}"

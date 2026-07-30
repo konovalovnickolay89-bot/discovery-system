@@ -1,9 +1,9 @@
-"""Graph Recall culinary worker — loopback only, restricted Hermes toolset."""
+"""Graph Recall culinary worker — loopback API, logseq-graph recall, Hermes synthesis."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
-# Restricted Hermes toolset name — enforced in invocation args, not docs-only.
-RESTRICTED_TOOLSET = "graph-recall-read-first"
-
-# Allowed culinary knowledge root on the Debian host.
+# Culinary knowledge root on Debian (verified paths only).
 LOGSEQ_GRAPH_ROOT = "/home/discovery-system/Logseq/graph"
+
+# Fixed executable for ranked retrieval (not Hermes tools).
+LOGSEQ_GRAPH_BIN = "logseq-graph"
