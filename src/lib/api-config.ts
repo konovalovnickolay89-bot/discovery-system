@@ -1,15 +1,11 @@
 /**
- * API origin for the authoritative backend.
- *
- * SECURITY: Never put CASUAL_BOARD_TOKEN (or any owner/bridge secret) in VITE_*
- * env vars or browser code. The web client is public (CORS-locked in production).
- * Approvals and bridge auth run from Debian/CLI only.
- *
- * DEVELOPMENT: VITE_API_BASE_URL empty → same-origin Vite proxy.
- * PRODUCTION (discovery-system.grok.me): VITE_API_BASE_URL = https://api…
+ * API origin for FastAPI.
+ * SECURITY: Never put CASUAL_BOARD_TOKEN / BRIDGE_TOKEN / UI password long-term
+ * secrets in VITE_*. Session tokens live only in sessionStorage after login.
  */
 
 export const GROK_ME_WEB_ORIGIN = "https://discovery-system.grok.me";
+export const DEFAULT_PROD_API = "https://api.apidiscoverysolution.uk";
 
 export type ApiConfigStatus =
   | { ok: true; base: string; mode: "same-origin" | "external" }
@@ -21,14 +17,15 @@ export function rawApiBase(): string {
 
 export function isBrowserProductionHost(): boolean {
   if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  return host === "discovery-system.grok.me" || host.endsWith(".grok.me");
+  return (
+    window.location.hostname === "discovery-system.grok.me" ||
+    window.location.hostname.endsWith(".grok.me")
+  );
 }
 
 export function validateApiConfig(): ApiConfigStatus {
   const raw = rawApiBase();
-  const onGrokMe =
-    isBrowserProductionHost() || (import.meta.env.PROD && !import.meta.env.DEV);
+  const onGrokMe = isBrowserProductionHost() || (import.meta.env.PROD && !import.meta.env.DEV);
 
   if (!raw) {
     if (onGrokMe && typeof window !== "undefined") {
@@ -36,78 +33,47 @@ export function validateApiConfig(): ApiConfigStatus {
         ok: false,
         mode: "misconfigured",
         reason:
-          "VITE_API_BASE_URL is not set. discovery-system.grok.me only hosts the web UI — " +
-          "set VITE_API_BASE_URL to your FastAPI https origin and rebuild. " +
-          "Do not put API tokens in the browser.",
+          "VITE_API_BASE_URL is not set. Production UI must use " +
+          `${DEFAULT_PROD_API} (rebuild). No API secrets in the browser.`,
       };
     }
     return { ok: true, base: "", mode: "same-origin" };
   }
-
   if (raw.startsWith("http://") && onGrokMe) {
     return {
       ok: false,
       mode: "misconfigured",
-      reason:
-        "VITE_API_BASE_URL must use https:// when the UI is on grok.me (mixed content).",
+      reason: "VITE_API_BASE_URL must be https:// on grok.me",
     };
   }
-
-  if ((raw.includes("localhost") || raw.includes("127.0.0.1")) && onGrokMe) {
-    return {
-      ok: false,
-      mode: "misconfigured",
-      reason:
-        "VITE_API_BASE_URL points at localhost — use a public https API origin.",
-    };
-  }
-
   try {
     // eslint-disable-next-line no-new
     new URL(raw);
   } catch {
-    return {
-      ok: false,
-      mode: "misconfigured",
-      reason: `VITE_API_BASE_URL is not a valid URL: ${raw}`,
-    };
+    return { ok: false, mode: "misconfigured", reason: `Invalid VITE_API_BASE_URL: ${raw}` };
   }
-
   return { ok: true, base: raw.replace(/\/$/, ""), mode: "external" };
 }
 
 export function apiBase(): string {
   const v = validateApiConfig();
-  if (!v.ok) return "";
-  return v.base;
+  return v.ok ? v.base : "";
 }
 
 export function apiUrl(path: string): string {
   const base = apiBase();
   const p = path.startsWith("/") ? path : `/${path}`;
-  if (!base) return p;
-  return `${base}${p}`;
+  return base ? `${base}${p}` : p;
 }
 
-export function wsUrl(path: string): string {
+export function wsUrl(path: string, accessToken?: string | null): string {
   const base = apiBase();
   let httpOrigin: string;
-  if (base) {
-    httpOrigin = base;
-  } else if (typeof window !== "undefined") {
-    httpOrigin = window.location.origin;
-  } else {
-    httpOrigin = "http://127.0.0.1:8080";
-  }
+  if (base) httpOrigin = base;
+  else if (typeof window !== "undefined") httpOrigin = window.location.origin;
+  else httpOrigin = "http://127.0.0.1:8080";
   const u = new URL(path, httpOrigin.endsWith("/") ? httpOrigin : `${httpOrigin}/`);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  if (accessToken) u.searchParams.set("access_token", accessToken);
   return u.toString();
-}
-
-/** Public JSON headers only — no Authorization. */
-export function publicHeaders(): HeadersInit {
-  return {
-    "content-type": "application/json",
-    accept: "application/json",
-  };
 }

@@ -1,4 +1,4 @@
-"""Versioned persistent board state + async event fan-out."""
+"""Versioned board state + event fan-out."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING
 
 from .config import Settings, get_settings
 from .models import ActionRecord, Board, BoardStatus, Level, StreamEvent
@@ -26,7 +26,6 @@ class BoardStore:
         self._lock = threading.RLock()
         self._board: Board | None = None
         self._actions: dict[str, ActionRecord] = {}
-        self._listeners: list[Callable[[StreamEvent], None]] = []
         self._async_queues: list[asyncio.Queue[StreamEvent]] = []
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -38,15 +37,11 @@ class BoardStore:
         if board.machine.warn:
             warnings += 1
         status = (
-            BoardStatus(
-                label=f"worth a look — {warnings} warnings",
-                warnings=warnings,
-            )
+            BoardStatus(label=f"worth a look — {warnings} warnings", warnings=warnings)
             if warnings
             else BoardStatus(label="ok · quiet", warnings=0)
         )
-        meta = board.meta.model_copy(update={"status": status})
-        return board.model_copy(update={"meta": meta})
+        return board.model_copy(update={"meta": board.meta.model_copy(update={"status": status})})
 
     def _persist_board(self, board: Board) -> None:
         path = self.settings.board_path
@@ -54,32 +49,13 @@ class BoardStore:
         tmp.write_text(board.model_dump_json(indent=2), encoding="utf-8")
         tmp.replace(path)
 
-    def _append_action(self, action: ActionRecord) -> None:
-        path = self.settings.actions_path
-        with path.open("a", encoding="utf-8") as f:
-            f.write(action.model_dump_json() + "\n")
-
-    def append_job_log(self, job: BridgeJob) -> None:
-        path = self.settings.jobs_path
-        with path.open("a", encoding="utf-8") as f:
-            f.write(job.model_dump_json() + "\n")
-        event = StreamEvent(
-            type="job",
-            revision=self.get().meta.revision,
-            at=job.updated_at,
-            job=job,
-            detail=job.message or None,
-        )
-        self._emit(event)
-
     def _load(self) -> Board:
         path = self.settings.board_path
         if path.is_file():
             try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                return Board.model_validate(raw)
+                return Board.model_validate(json.loads(path.read_text(encoding="utf-8")))
             except Exception as e:  # noqa: BLE001
-                log.warning("board load failed, reseeding: %s", e)
+                log.warning("board load failed: %s", e)
         board = build_seed_board()
         self._persist_board(board)
         return board
@@ -90,13 +66,7 @@ class BoardStore:
                 self._board = self._load()
             return self._board
 
-    def set(
-        self,
-        board: Board,
-        *,
-        bump: bool = True,
-        detail: str = "",
-    ) -> Board:
+    def set(self, board: Board, *, bump: bool = True, detail: str = "") -> Board:
         with self._lock:
             board = self._recompute_status(board)
             now = self._now()
@@ -105,29 +75,24 @@ class BoardStore:
             board = board.model_copy(update={"meta": meta})
             self._board = board
             self._persist_board(board)
-            event = StreamEvent(
-                type="revision",
-                revision=rev,
-                at=now,
-                board=board,
-                detail=detail or None,
-            )
+            event = StreamEvent(type="revision", revision=rev, at=now, board=board, detail=detail or None)
         self._emit(event)
-        log.info("board revision=%s detail=%s", rev, detail)
         return board
 
     def save_action(self, action: ActionRecord) -> ActionRecord:
         with self._lock:
             self._actions[action.id] = action
-            self._append_action(action)
-        event = StreamEvent(
-            type="action",
-            revision=self.get().meta.revision,
-            at=action.updated_at,
-            action=action,
-            detail=action.message or None,
+            with self.settings.actions_path.open("a", encoding="utf-8") as f:
+                f.write(action.model_dump_json() + "\n")
+        self._emit(
+            StreamEvent(
+                type="action",
+                revision=self.get().meta.revision,
+                at=action.updated_at,
+                action=action,
+                detail=action.message or None,
+            )
         )
-        self._emit(event)
         return action
 
     def get_action(self, action_id: str) -> ActionRecord | None:
@@ -137,7 +102,7 @@ class BoardStore:
         path = self.settings.actions_path
         if not path.is_file():
             return None
-        found: ActionRecord | None = None
+        found = None
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -152,6 +117,17 @@ class BoardStore:
                 self._actions[action_id] = found
         return found
 
+    def emit_job(self, job: BridgeJob) -> None:
+        self._emit(
+            StreamEvent(
+                type="job",
+                revision=self.get().meta.revision,
+                at=job.updated_at,
+                job=job,
+                detail=job.message or None,
+            )
+        )
+
     def reset(self) -> Board:
         return self.set(build_seed_board(), bump=True, detail="reset to seed")
 
@@ -165,11 +141,6 @@ class BoardStore:
             self._async_queues.remove(q)
 
     def _emit(self, event: StreamEvent) -> None:
-        for fn in list(self._listeners):
-            try:
-                fn(event)
-            except Exception:  # noqa: BLE001
-                pass
         for q in list(self._async_queues):
             try:
                 q.put_nowait(event)
@@ -195,10 +166,18 @@ def get_store() -> BoardStore:
 
 
 def reset_store_for_tests(tmp_path: Path) -> BoardStore:
+    """Point store + sqlite at tmp_path and wipe jobs (isolated tests)."""
     global _store
+    import os
+
+    from .db import close, connect
     from .jobs import reset_jobs_for_tests
 
-    settings = get_settings().model_copy(update={"data_dir": tmp_path})
+    os.environ["CASUAL_BOARD_DATA_DIR"] = str(tmp_path)
+    get_settings.cache_clear()
+    close()
+    settings = get_settings()
     _store = BoardStore(settings)
+    connect(settings.sqlite_path)
     reset_jobs_for_tests()
     return _store

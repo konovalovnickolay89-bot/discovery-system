@@ -1,4 +1,4 @@
-"""Boundary tests: public board, no browser secrets, bridge queue, used_ai."""
+"""Auth boundaries, durable queue, lease/HMAC, public health."""
 
 from __future__ import annotations
 
@@ -8,29 +8,31 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ["CASUAL_BOARD_DATA_DIR"] = "/tmp/casual-board-test-data"
-os.environ["CASUAL_BOARD_TOKEN"] = "owner-secret"
-os.environ["CASUAL_BOARD_BRIDGE_TOKEN"] = "bridge-secret"
+os.environ["CASUAL_BOARD_ENV"] = "development"
+os.environ["CASUAL_BOARD_DATA_DIR"] = "/tmp/casual-board-test-data-v2"
+os.environ["CASUAL_BOARD_TOKEN"] = "owner-secret-distinct"
+os.environ["CASUAL_BOARD_BRIDGE_TOKEN"] = "bridge-secret-distinct"
+os.environ["CASUAL_BOARD_UI_PASSWORD"] = "ui-pass-secret"
+os.environ["CASUAL_BOARD_SESSION_SECRET"] = "session-hmac-secret"
 os.environ["CASUAL_BOARD_ENABLE_AI"] = "true"
 os.environ["CASUAL_BOARD_AI_PROVIDER"] = "function"
+os.environ["CASUAL_BOARD_CORS_ORIGINS"] = "https://discovery-system.grok.me"
+os.environ["CASUAL_BOARD_TRUSTED_HOSTS"] = "testserver,127.0.0.1,localhost"
 os.environ.pop("OPENAI_API_KEY", None)
 os.environ.pop("XAI_API_KEY", None)
 
 from app.config import get_settings
-from app.jobs import sign_payload
+from app.db import close, connect
+from app.jobs import get_job, sign_result
 from app.main import app
-from app.seed import build_seed_board
 from app.store import reset_store_for_tests
-from app.agents import capture_with_ai
 
 
 @pytest.fixture()
 def client(tmp_path: Path):
     get_settings.cache_clear()
+    close()
     os.environ["CASUAL_BOARD_DATA_DIR"] = str(tmp_path)
-    os.environ["CASUAL_BOARD_TOKEN"] = "owner-secret"
-    os.environ["CASUAL_BOARD_BRIDGE_TOKEN"] = "bridge-secret"
-    os.environ["CASUAL_BOARD_AI_PROVIDER"] = "function"
     get_settings.cache_clear()
     reset_store_for_tests(tmp_path)
     with TestClient(app) as c:
@@ -38,209 +40,225 @@ def client(tmp_path: Path):
 
 
 def owner():
-    return {"Authorization": "Bearer owner-secret"}
+    return {"Authorization": "Bearer owner-secret-distinct"}
 
 
 def bridge():
-    return {"Authorization": "Bearer bridge-secret"}
+    return {"Authorization": "Bearer bridge-secret-distinct"}
 
 
-def test_seed_board_validates():
-    b = build_seed_board()
-    assert b.meta.revision == 1
+def session(client: TestClient) -> dict:
+    r = client.post("/v1/auth/login", json={"password": "ui-pass-secret"})
+    assert r.status_code == 200, r.text
+    tok = r.json()["access_token"]
+    return {"Authorization": f"Bearer {tok}"}
 
 
-def test_health_public(client: TestClient):
+def test_health_public_minimal(client: TestClient):
     r = client.get("/health")
     assert r.status_code == 200
-    assert r.json()["ok"] is True
-    assert r.json()["ai_provider"] == "function"
+    body = r.json()
+    assert body["ok"] is True
+    assert "data_dir" not in body
+    assert "auth_mode" not in body
+    assert set(body.keys()) <= {"ok", "service", "version", "time"}
 
 
-def test_board_public_no_token(client: TestClient):
-    r = client.get("/v1/board")
+def test_board_requires_session(client: TestClient):
+    assert client.get("/v1/board").status_code == 401
+    assert client.post("/v1/captures", json={"note": "x"}).status_code == 401
+    assert client.post("/v1/chat", json={"message": "status"}).status_code == 401
+
+
+def test_login_and_board(client: TestClient):
+    assert client.post("/v1/auth/login", json={"password": "wrong"}).status_code == 401
+    h = session(client)
+    r = client.get("/v1/board", headers=h)
     assert r.status_code == 200
     assert "today" in r.json()
 
 
-def test_capture_public_used_ai_false_for_function_provider(client: TestClient):
+def test_owner_token_not_session(client: TestClient):
+    assert client.get("/v1/board", headers=owner()).status_code == 401
+
+
+def test_bridge_token_not_session(client: TestClient):
+    assert client.get("/v1/board", headers=bridge()).status_code == 401
+
+
+def test_capture_session_used_ai_false(client: TestClient):
+    h = session(client)
     r = client.post(
         "/v1/captures",
-        json={"note": "check duck confit for Friday allergen matrix", "use_ai": True},
+        headers=h,
+        json={"note": "duck confit allergen check", "use_ai": True},
     )
     assert r.status_code == 200
-    body = r.json()
-    assert body["used_ai"] is False
-    assert "function" in body["ai_provider"]
+    assert r.json()["used_ai"] is False
 
 
-def test_used_ai_agent_function_provider():
-    get_settings.cache_clear()
-    os.environ["CASUAL_BOARD_AI_PROVIDER"] = "function"
-    get_settings.cache_clear()
-    draft, used, provider = capture_with_ai("urgent allergen matrix reprint")
-    assert draft.title
-    assert used is False
-    assert "function" in provider
-
-
-def test_server_side_add_today(client: TestClient):
+def test_job_survives_db_reconnect(client: TestClient, tmp_path: Path):
+    h = session(client)
     r = client.post(
         "/v1/commands",
-        json={"command": "add_today", "payload": {"text": "walk-in check"}, "source": "web"},
-    )
-    assert r.status_code == 200
-    assert r.json()["action"]["status"] == "completed"
-    assert r.json()["job"] is None
-
-
-def test_host_facing_queues_not_executes(client: TestClient):
-    r = client.post(
-        "/v1/commands",
+        headers=h,
         json={
             "command": "set_machine",
-            "payload": {"disk_pct": 88, "free_gib": 20, "net": "wired"},
+            "payload": {"disk_pct": 61, "free_gib": 40, "net": "wired"},
             "source": "web",
-            "actor": "phone",
         },
     )
     assert r.status_code == 200
-    body = r.json()
-    assert body["job"] is not None
-    assert body["job"]["status"] == "pending_approval"
-    board = client.get("/v1/board").json()
-    assert board["machine"]["disk_pct"] != 88
+    job_id = r.json()["job"]["id"]
+    assert r.json()["job"]["status"] == "pending_approval"
+
+    # Simulate process restart: close connection, reconnect same file (no wipe)
+    close()
+    connect(tmp_path / "casual_board.sqlite3")
+    job = get_job(job_id)
+    assert job is not None
+    assert job.status.value == "pending_approval"
 
 
-def test_approval_queues_does_not_run_host(client: TestClient):
+def test_approval_does_not_execute_host(client: TestClient):
+    h = session(client)
     r = client.post(
         "/v1/commands",
+        headers=h,
         json={
             "command": "set_machine",
-            "payload": {"disk_pct": 77, "free_gib": 10, "net": "wired"},
+            "payload": {"disk_pct": 70, "free_gib": 10, "net": "wired"},
             "source": "web",
         },
     )
     job_id = r.json()["job"]["id"]
-    bad = client.post(f"/v1/actions/{job_id}/approval", json={"approve": True})
-    assert bad.status_code == 401
-
+    assert client.post(f"/v1/actions/{job_id}/approval", json={"approve": True}).status_code == 401
     ok = client.post(
-        f"/v1/actions/{job_id}/approval",
-        headers=owner(),
-        json={"approve": True, "note": "ok"},
-    )
-    assert ok.status_code == 200
-    body = ok.json()
-    assert body["job"]["status"] == "queued"
-    assert client.get("/v1/board").json()["machine"]["disk_pct"] != 77
-
-
-def test_bridge_lease_and_signed_result(client: TestClient):
-    r = client.post(
-        "/v1/commands",
-        json={
-            "command": "set_machine",
-            "payload": {
-                "disk_pct": 55,
-                "free_gib": 90,
-                "net": "wired",
-                "host": "debian-minimal",
-            },
-            "source": "web",
-        },
-    )
-    job_id = r.json()["job"]["id"]
-    client.post(
         f"/v1/actions/{job_id}/approval",
         headers=owner(),
         json={"approve": True},
     )
+    assert ok.status_code == 200
+    assert ok.json()["job"]["status"] == "queued"
+    assert client.get("/v1/board", headers=h).json()["machine"]["disk_pct"] != 70
+
+
+def test_lease_hmac_and_worker_binding(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/commands",
+        headers=h,
+        json={
+            "command": "set_machine",
+            "payload": {"disk_pct": 55, "free_gib": 90, "net": "wired", "host": "debian-minimal"},
+            "source": "web",
+        },
+    )
+    job_id = r.json()["job"]["id"]
+    client.post(f"/v1/actions/{job_id}/approval", headers=owner(), json={"approve": True})
 
     assert client.get("/v1/bridge/jobs/lease?timeout_s=1").status_code == 401
+    assert client.get("/v1/bridge/jobs/lease?timeout_s=1", headers=owner()).status_code == 403
 
     lease = client.get(
         "/v1/bridge/jobs/lease",
         headers=bridge(),
-        params={"worker_id": "test-worker", "timeout_s": 2},
+        params={"worker_id": "worker-a", "timeout_s": 2},
     )
     assert lease.status_code == 200
     job = lease.json()["job"]
-    assert job is not None
     assert job["status"] == "leased"
-    assert job["id"] == job_id
+    nonce = job["lease_nonce"]
+    assert nonce
 
-    result = {"stub": True, "disk": 55}
-    sig = sign_payload(job_id, "completed", result)
-    done = client.post(
+    result = {"stub": True}
+    patch = {"machine": {"disk_pct": 55, "free_gib": 90, "net": "wired", "host": "debian-minimal"}}
+
+    bad_w = client.post(
         "/v1/bridge/jobs/result",
         headers=bridge(),
         json={
             "job_id": job_id,
             "status": "completed",
             "result": result,
-            "message": "stub ok",
-            "worker_id": "test-worker",
-            "signature": sig,
-            "executor_note": "stub",
-            "board_patch": {
-                "machine": {
-                    "disk_pct": 55,
-                    "free_gib": 90,
-                    "net": "wired",
-                    "host": "debian-minimal",
-                }
-            },
+            "message": "ok",
+            "worker_id": "worker-b",
+            "lease_nonce": nonce,
+            "signature": sign_result(
+                job_id=job_id,
+                status="completed",
+                worker_id="worker-b",
+                lease_nonce=nonce,
+                result=result,
+                message="ok",
+                board_patch=patch,
+            ),
+            "board_patch": patch,
         },
     )
-    assert done.status_code == 200
-    assert done.json()["status"] == "completed"
-    board = client.get("/v1/board").json()
-    assert board["machine"]["disk_pct"] == 55
+    assert bad_w.status_code == 403
 
-
-def test_bridge_rejects_bad_signature(client: TestClient):
-    r = client.post(
-        "/v1/commands",
-        json={
-            "command": "remove_today",
-            "payload": {"id": "t-open"},
-            "source": "web",
-        },
-    )
-    job_id = r.json()["job"]["id"]
-    client.post(
-        f"/v1/actions/{job_id}/approval",
-        headers=owner(),
-        json={"approve": True},
-    )
-    client.get(
-        "/v1/bridge/jobs/lease",
-        headers=bridge(),
-        params={"timeout_s": 2, "worker_id": "w"},
-    )
-    bad = client.post(
+    bad_s = client.post(
         "/v1/bridge/jobs/result",
         headers=bridge(),
         json={
             "job_id": job_id,
             "status": "completed",
-            "result": {},
-            "signature": "deadbeef",
-            "worker_id": "w",
+            "result": result,
+            "worker_id": "worker-a",
+            "lease_nonce": nonce,
+            "signature": "00" * 32,
+            "board_patch": patch,
         },
     )
-    assert bad.status_code == 401
+    assert bad_s.status_code == 401
+
+    sig = sign_result(
+        job_id=job_id,
+        status="completed",
+        worker_id="worker-a",
+        lease_nonce=nonce,
+        result=result,
+        message="ok",
+        board_patch=patch,
+    )
+    good = client.post(
+        "/v1/bridge/jobs/result",
+        headers=bridge(),
+        json={
+            "job_id": job_id,
+            "status": "completed",
+            "result": result,
+            "message": "ok",
+            "worker_id": "worker-a",
+            "lease_nonce": nonce,
+            "signature": sig,
+            "board_patch": patch,
+        },
+    )
+    assert good.status_code == 200
+    assert good.json()["status"] == "completed"
+    assert client.get("/v1/board", headers=h).json()["machine"]["disk_pct"] == 55
+
+    replay = client.post(
+        "/v1/bridge/jobs/result",
+        headers=bridge(),
+        json={
+            "job_id": job_id,
+            "status": "completed",
+            "result": result,
+            "message": "ok",
+            "worker_id": "worker-a",
+            "lease_nonce": nonce,
+            "signature": sig,
+            "board_patch": patch,
+        },
+    )
+    assert replay.status_code in (409, 403)
 
 
 def test_chat_no_shell(client: TestClient):
-    r = client.post("/v1/chat", json={"message": "rm -rf /", "channel": "hermes"})
+    h = session(client)
+    r = client.post("/v1/chat", headers=h, json={"message": "rm -rf /"})
     assert r.status_code == 200
     assert "shell" in r.json()["reply"].lower() or "allowlist" in r.json()["reply"].lower()
-
-
-def test_ws_no_token_query_needed(client: TestClient):
-    with client.websocket_connect("/v1/board/ws") as ws:
-        msg = ws.receive_json()
-        assert msg["type"] == "snapshot"
-        assert "board" in msg

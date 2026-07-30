@@ -1,5 +1,5 @@
 [Unit]
-Description=Casual Board FastAPI (authoritative board for discovery-system.grok.me)
+Description=Casual Board FastAPI (loopback only — Cloudflare Tunnel terminates TLS)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,17 +9,21 @@ User=casual
 Group=casual
 EnvironmentFile=/etc/casual-board.env
 WorkingDirectory=/opt/casual-board/backend
+# Host/port come from env; force loopback if env mis-set:
 ExecStart=/opt/casual-board/backend/.venv/bin/python -m uvicorn app.main:app \
-  --host ${CASUAL_BOARD_HOST} \
-  --port ${CASUAL_BOARD_PORT} \
+  --host 127.0.0.1 \
+  --port 8090 \
   --proxy-headers \
-  --forwarded-allow-ips='*'
+  --forwarded-allow-ips=127.0.0.1
 Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/casual-board
+# Do not expose beyond loopback
+IPAddressDeny=any
+IPAddressAllow=localhost
 
 [Install]
 WantedBy=multi-user.target

@@ -202,14 +202,20 @@ class HealthResponse(BaseModel):
     ok: bool = True
     service: str = "casual-board"
     version: str = "0.1.0"
-    env: str = "development"
-    revision: int = 0
-    auth_mode: Literal["token", "open-dev"] = "open-dev"
-    pydantic: str
-    pydantic_ai_available: bool = True
-    ai_provider: str = "none"
-    data_dir: str = ""
     time: datetime
+
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=500)
+
+
+class SessionResponse(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+    scope: str = "board:rw"
+    expires_at: int
 
 
 class CaptureRequest(BaseModel):
@@ -370,6 +376,7 @@ class BridgeJob(BaseModel):
     message: str = ""
     result: dict[str, Any] | None = None
     leased_by: str | None = None
+    lease_nonce: str | None = None
     lease_expires_at: datetime | None = None
     board_revision: int | None = None
     audit: dict[str, Any] = Field(default_factory=dict)
@@ -386,6 +393,7 @@ class BridgeJobResultRequest(BaseModel):
     result: dict[str, Any] = Field(default_factory=dict)
     message: str = ""
     worker_id: str = "debian-bridge"
+    lease_nonce: str = ""
     signature: str = ""
     executor_note: str = "stub — Hermes/mpv not claimed verified"
     board_patch: dict[str, Any] | None = None

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Board, HealthResponse, MediaSection } from "@/lib/board-types";
 import {
+  AuthError,
   connectBoardSocket,
   fetchBoard,
   fetchHealth,
+  isSignedIn,
+  logout,
   postCommand,
 } from "@/lib/board-api";
 import { FALLBACK_BOARD } from "@/lib/board-fallback";
@@ -16,14 +19,21 @@ import { BriefingCard } from "./BriefingCard";
 import { MachineCard } from "./MachineCard";
 import { ChatPanel } from "./ChatPanel";
 import { ApiFailureBanner, type ApiFailureKind } from "./ApiFailureBanner";
+import { LoginPanel } from "./LoginPanel";
 
 export function CasualBoard() {
+  const [authed, setAuthed] = useState(false);
   const [board, setBoard] = useState<Board>(FALLBACK_BOARD);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [connection, setConnection] = useState("connecting…");
   const [failure, setFailure] = useState<ApiFailureKind | null>(null);
   const [failureDetail, setFailureDetail] = useState<string | null>(null);
   const [loadedOnce, setLoadedOnce] = useState(false);
+  const [authNote, setAuthNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAuthed(isSignedIn());
+  }, []);
 
   const onBoard = useCallback((b: Board) => {
     setBoard(b);
@@ -31,7 +41,7 @@ export function CasualBoard() {
     setFailure((f) => (f === "unreachable" || f === "offline-cache" ? null : f));
   }, []);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     const cfg = validateApiConfig();
     if (!cfg.ok) {
       setFailure("misconfigured");
@@ -39,37 +49,32 @@ export function CasualBoard() {
       setConnection("misconfigured");
       return;
     }
-
-    let cancelled = false;
-    (async () => {
+    try {
       const [b, h] = await Promise.all([fetchBoard(), fetchHealth()]);
-      if (cancelled) return;
-      if (h) {
-        setHealth(h);
-        if (b.meta.revision > 0) {
-          setBoard(b);
-          setLoadedOnce(true);
-          setFailure(null);
-        }
-      } else {
-        setHealth(null);
-        setFailure(b.meta.revision > 0 ? "offline-cache" : "unreachable");
-        setFailureDetail(
-          "GET /health failed. Is FastAPI running and is VITE_API_BASE_URL correct?",
-        );
-        setConnection("api unreachable");
-        if (b.meta.revision > 0) {
-          setBoard(b);
-          setLoadedOnce(true);
-        }
+      setHealth(h);
+      setBoard(b);
+      setLoadedOnce(true);
+      setFailure(null);
+      setAuthNote(null);
+    } catch (e) {
+      if (e instanceof AuthError) {
+        setAuthed(false);
+        setAuthNote("Session expired — sign in again.");
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      setFailure("unreachable");
+      setFailureDetail(e instanceof Error ? e.message : "API unreachable");
+      setConnection("api unreachable");
+    }
   }, []);
 
   useEffect(() => {
+    if (!authed) return;
+    void load();
+  }, [authed, load]);
+
+  useEffect(() => {
+    if (!authed) return;
     const cfg = validateApiConfig();
     if (!cfg.ok) return;
     return connectBoardSocket({
@@ -83,24 +88,46 @@ export function CasualBoard() {
           else setFailure("unreachable");
         }
       },
+      onAuthError: () => {
+        setAuthed(false);
+        setAuthNote("Session expired — sign in again.");
+      },
     });
-  }, [onBoard, loadedOnce]);
+  }, [authed, onBoard, loadedOnce]);
 
-  async function setMediaFromCommand(
-    command: string,
-    payload: Record<string, unknown> = {},
-  ) {
+  if (!authed) {
+    return (
+      <>
+        {authNote ? (
+          <div className="app-shell" style={{ maxWidth: 420, marginBottom: 0 }}>
+            <div className="api-failure-banner" data-kind="misconfigured" role="status">
+              <div className="api-failure-title">signed out</div>
+              <p className="api-failure-body">{authNote}</p>
+            </div>
+          </div>
+        ) : null}
+        <LoginPanel
+          onSignedIn={() => {
+            setAuthed(true);
+            setAuthNote(null);
+          }}
+        />
+      </>
+    );
+  }
+
+  async function setMediaFromCommand(command: string, payload: Record<string, unknown> = {}) {
     try {
       const res = await postCommand(command, payload);
       if (res.board) setBoard(res.board);
       return res.action.message;
     } catch (e) {
+      if (e instanceof AuthError) {
+        setAuthed(false);
+        setAuthNote("Session expired — sign in again.");
+      }
       return e instanceof Error ? e.message : "command failed";
     }
-  }
-
-  function setMediaLocal(media: MediaSection) {
-    setBoard((b) => ({ ...b, media }));
   }
 
   return (
@@ -109,17 +136,24 @@ export function CasualBoard() {
         <h1 className="m-0 font-mono text-sm font-medium tracking-wide text-fg uppercase">
           Casual Board
         </h1>
-        <span className="font-mono text-xs text-faint">
-          discovery-system · public UI · debian bridge outbound
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xs text-faint">private · session</span>
+          <button
+            type="button"
+            className="signout-btn"
+            onClick={() => {
+              logout();
+              setAuthed(false);
+              setBoard(FALLBACK_BOARD);
+              setAuthNote(null);
+            }}
+          >
+            sign out
+          </button>
+        </div>
       </div>
 
-      <ApiFailureBanner
-        kind={failure}
-        detail={failureDetail}
-        lastSync={board.meta.updated_at}
-      />
-
+      <ApiFailureBanner kind={failure} detail={failureDetail} lastSync={board.meta.updated_at} />
       <HeaderBar meta={board.meta} health={health} connection={connection} />
 
       <div className="board-grid">
@@ -127,14 +161,13 @@ export function CasualBoard() {
           <TodayCard board={board} onBoard={setBoard} />
           <MediaCard
             media={board.media}
-            onMedia={setMediaLocal}
+            onMedia={(m: MediaSection) => setBoard((b) => ({ ...b, media: m }))}
             runCommand={setMediaFromCommand}
           />
           <div className="hidden min-[1100px]:block">
             <MachineCard machine={board.machine} />
           </div>
         </div>
-
         <div className="board-col board-col-right flex flex-col gap-3.5">
           <LearningCard board={board} />
           <BriefingCard briefing={board.briefing} />

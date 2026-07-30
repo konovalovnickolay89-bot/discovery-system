@@ -135,14 +135,8 @@ export type Board = {
 
 export type HealthResponse = {
   ok: boolean;
+  service?: string;
   version?: string;
-  env?: string;
-  revision?: number;
-  auth_mode?: string;
-  pydantic?: string;
-  pydantic_ai_available?: boolean;
-  ai_provider?: string;
-  data_dir?: string;
   time?: string;
 };
 

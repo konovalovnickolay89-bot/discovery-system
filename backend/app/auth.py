@@ -1,4 +1,4 @@
-"""Token auth. Owner and bridge secrets never ship to the browser."""
+"""Server-only credentials: owner (admin) and bridge. Never used by browser."""
 
 from __future__ import annotations
 
@@ -23,13 +23,20 @@ def _bearer(authorization: str | None) -> str | None:
 
 
 def require_owner(authorization: str | None = Header(default=None)) -> str:
-    """Admin / approval routes. CASUAL_BOARD_TOKEN only — not for browsers."""
     settings = get_settings()
     expected = settings.api_token.strip()
     if not expected:
         return "open-dev"
     got = _bearer(authorization)
-    if not got or not hmac.compare_digest(got, expected):
+    if not got:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Owner Bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if settings.bridge_token and hmac.compare_digest(got, settings.bridge_token):
+        raise HTTPException(status_code=403, detail="bridge token cannot call owner routes")
+    if not hmac.compare_digest(got, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Owner Bearer token required",
@@ -39,28 +46,25 @@ def require_owner(authorization: str | None = Header(default=None)) -> str:
 
 
 def require_bridge(authorization: str | None = Header(default=None)) -> str:
-    """Debian bridge long-poll + result posting. CASUAL_BOARD_BRIDGE_TOKEN (or TOKEN)."""
     settings = get_settings()
-    expected = (settings.bridge_token or settings.api_token).strip()
+    expected = settings.bridge_token.strip()
     if not expected:
+        if settings.is_production:
+            raise HTTPException(status_code=503, detail="bridge token not configured")
         return "open-dev-bridge"
     got = _bearer(authorization)
-    if not got or not hmac.compare_digest(got, expected):
+    if not got:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Bridge Bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if settings.api_token and hmac.compare_digest(got, settings.api_token):
+        raise HTTPException(status_code=403, detail="owner token cannot call bridge routes")
+    if not hmac.compare_digest(got, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Bridge Bearer token required",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return "bridge"
-
-
-def optional_owner(authorization: str | None = Header(default=None)) -> str:
-    """Label actor if owner token present; otherwise 'public'."""
-    settings = get_settings()
-    expected = settings.api_token.strip()
-    if not expected:
-        return "open-dev"
-    got = _bearer(authorization)
-    if got and hmac.compare_digest(got, expected):
-        return "owner"
-    return "public"

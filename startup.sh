@@ -2,13 +2,18 @@
 set -eu
 cd /workspace
 
-# Authoritative Python API (backend/)
 if ! curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8090/health; then
   mkdir -p /workspace/backend/data
   export CASUAL_BOARD_DATA_DIR=/workspace/backend/data
-  # open-dev for local preview; set CASUAL_BOARD_TOKEN for real deploys
-  export CASUAL_BOARD_TOKEN="${CASUAL_BOARD_TOKEN:-}"
-  export CASUAL_BOARD_ENABLE_AI=true
+  export CASUAL_BOARD_HOST=127.0.0.1
+  export CASUAL_BOARD_PORT=8090
+  export CASUAL_BOARD_TOKEN="${CASUAL_BOARD_TOKEN:-dev-owner-token}"
+  export CASUAL_BOARD_BRIDGE_TOKEN="${CASUAL_BOARD_BRIDGE_TOKEN:-dev-bridge-token}"
+  export CASUAL_BOARD_UI_PASSWORD="${CASUAL_BOARD_UI_PASSWORD:-dev-ui-password}"
+  export CASUAL_BOARD_SESSION_SECRET="${CASUAL_BOARD_SESSION_SECRET:-dev-session-secret}"
+  export CASUAL_BOARD_AI_PROVIDER=function
+  export CASUAL_BOARD_TRUSTED_HOSTS=127.0.0.1,localhost,testserver
+  export CASUAL_BOARD_CORS_ORIGINS="https://discovery-system.grok.me,http://127.0.0.1:8080"
   (
     cd /workspace/backend
     PYTHONPATH=/workspace/backend \
@@ -25,7 +30,6 @@ if ! curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8090/health; then
   done
 fi
 
-# Web preview
 if curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8080/; then
   exit 0
 fi

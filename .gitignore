@@ -1,26 +1,36 @@
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 .venv/
 venv/
+*.sqlite3
+*.sqlite3-*
+
+# Runtime data (never commit)
 backend/data/
-*.jsonl
+**/data/board.json
+**/data/actions.jsonl
+**/data/*.sqlite3
 
 # Node
 node_modules/
 .tanstack/
 dist/
 .vercel/output/
+screenshots/*.png
 
-# Env / secrets — never commit
+# Env / secrets
 .env
 .env.local
 .env.production
+*.pem
 
 # OS / editor
 .DS_Store
 *.swp
+.grok/status
 
-# Legacy duplicate (removed)
-# python/ was archived/deleted — do not reintroduce
+# Legacy
+python/

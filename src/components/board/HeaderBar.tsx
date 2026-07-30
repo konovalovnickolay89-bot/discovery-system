@@ -54,11 +54,11 @@ export function HeaderBar({
       <span className="sep">·</span>
       <span className={warn ? "status-warn" : "status-ok"}>{meta.status.label}</span>
       <span className="sep">·</span>
-      <span title={health?.data_dir}>{connection}</span>
-      {health?.auth_mode ? (
+      <span>{connection}</span>
+      {health?.ok ? (
         <>
           <span className="sep">·</span>
-          <span>auth {health.auth_mode}</span>
+          <span>api ok</span>
         </>
       ) : null}
     </header>
