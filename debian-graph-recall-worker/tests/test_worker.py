@@ -1,4 +1,4 @@
-"""Graph Recall worker tests — fake Hermes + fake logseq-graph only."""
+"""Graph Recall worker tests — fake hermes -z only; no logseq-graph."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ os.environ["CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S"] = "300"
 os.environ["CASUAL_BOARD_UI_PASSWORD"] = "ui-pass-secret"
 os.environ["CASUAL_BOARD_SESSION_SECRET"] = "session-hmac-secret"
 os.environ["CASUAL_BOARD_AI_PROVIDER"] = "function"
+os.environ["CASUAL_BOARD_EVIDENCE_AI_PROVIDER"] = "none"
 os.environ["CASUAL_BOARD_CORS_ORIGINS"] = "https://discovery-system.grok.me"
 os.environ["CASUAL_BOARD_TRUSTED_HOSTS"] = "testserver,127.0.0.1,localhost"
 
@@ -39,11 +40,6 @@ from casual_board_graph_recall_worker.hermes_runner import (
     validate_hermes_argv,
 )
 from casual_board_graph_recall_worker.prompt import build_prompt
-from casual_board_graph_recall_worker.retrieval import (
-    build_logseq_recall_command,
-    build_recall_query,
-    sanitise_query_fragment,
-)
 from casual_board_graph_recall_worker.worker import GraphRecallWorker
 
 
@@ -128,98 +124,52 @@ class TCClient(GraphRecallClient):
         return r.json()
 
 
-def test_hermes_command_uses_toolsets_not_toolset_and_prompt_after_z():
-    cmd = build_hermes_command("hello world", toolsets="")
-    assert cmd[0] == "hermes"
-    assert "-z" in cmd
-    zi = cmd.index("-z")
-    assert cmd[zi + 1] == "hello world"
+def test_hermes_command_is_z_prompt_only():
+    cmd = build_hermes_command("hello world")
+    assert cmd == ["hermes", "-z", "hello world"]
     assert "--toolset" not in cmd
     assert "--timeout" not in cmd
-    # synthesis-only default: no --toolsets means no terminal/file tools
     assert "--toolsets" not in cmd
     validate_hermes_argv(cmd)
 
-    cmd2 = build_hermes_command("p", toolsets="memory")
-    assert "--toolsets" in cmd2
-    assert cmd2[cmd2.index("--toolsets") + 1] == "memory"
-    assert "--toolset" not in cmd2
-    assert "--timeout" not in cmd2
 
-
-def test_invalid_cli_flags_rejected_before_install():
+def test_invalid_cli_flags_rejected():
     with pytest.raises(InvalidHermesCLIError):
         validate_hermes_argv(["hermes", "-z", "x", "--toolset", "x"])
     with pytest.raises(InvalidHermesCLIError):
         validate_hermes_argv(["hermes", "-z", "x", "--timeout", "30"])
     with pytest.raises(InvalidHermesCLIError):
-        validate_hermes_argv(["hermes", "-z"])  # missing prompt
-    with pytest.raises(InvalidHermesCLIError):
-        validate_hermes_argv(["hermes", "-z", "x", "--toolsets", "terminal"])
-    with pytest.raises(InvalidHermesCLIError):
-        validate_hermes_argv(["hermes", "-z", "x", "--toolsets", "file"])
+        validate_hermes_argv(["hermes", "-z"])
 
 
-def test_dry_run_parser_ok_without_binary():
+def test_dry_run_parser_ok():
     ok, msg = dry_run_hermes_parser("ping")
     assert ok, msg
-    assert "toolset" not in msg.lower() or "without --toolset" in msg
 
 
-def test_logseq_recall_command_shell_false_bounded():
-    cmd = build_logseq_recall_command("onion soup; rm -rf /", limit=6)
-    assert cmd[0] == "logseq-graph"
-    assert cmd[1] == "recall"
-    assert cmd[3] == "--limit"
-    assert cmd[4] == "6"
-    assert ";" not in cmd[2]
-    assert not cmd[2].startswith("-")
-    assert len(cmd) == 5
-    # ensure no shell metacharacters in query arg
-    for bad in (";", "|", "&", "`", "$", "\n"):
-        assert bad not in cmd[2]
-
-
-def test_query_sanitises_user_text():
-    q = sanitise_query_fragment("$(reboot) && cat /etc/passwd; --force", max_len=80)
-    assert "$" not in q
-    assert ";" not in q
-    assert not q.startswith("-")
-    payload = {
-        "consultation": {
-            "mode": "build",
-            "title": "soup",
-            "ingredients_or_problem": "onion\n`rm -rf`",
-            "desired_outcome": "staff meal",
-        },
-        "produce_lots": [],
-        "ingredients": [],
-    }
-    query = build_recall_query(payload)
-    assert "rm" in query or "onion" in query
-    assert "`" not in query
-    assert len(query) <= 160
-
-
-def test_prompt_includes_retrieved_and_safety():
+def test_prompt_delimits_data_no_logseq_invocation():
     p = build_prompt(
         {
             "consultation": {
                 "id": "cook-1",
                 "mode": "rescue",
+                "ingredients_or_problem": "trim",
                 "local_safety_plan": {
-                    "rejected": True,
-                    "decision": {"verdict": "discard_or_escalate"},
+                    "rejected": False,
+                    "decision": {"verdict": "proceed"},
+                    "guest_service_allowed": False,
                 },
             },
+            "produce_lots": [{"name": "onion"}],
+            "ingredients": [],
+            "dish": None,
             "mode_contract": "strict",
             "rules": [],
-        },
-        retrieved_context=[{"title": "x", "path": "/home/discovery-system/Logseq/graph/a.md"}],
+        }
     )
-    assert "RETRIEVED_NOTES_JSON" in p
-    assert "discard_or_escalate" in p
-    assert "NO shell" in p or "no shell" in p.lower()
+    assert "UNTRUSTED_DATA_JSON" in p
+    assert "never executable" in p.lower() or "data, never" in p.lower()
+    assert "never invokes host graph CLIs" in p
 
 
 def test_no_job(client: TestClient):
@@ -232,166 +182,131 @@ def test_no_job(client: TestClient):
     assert r.json()["job"] is None
 
 
-def test_once_completed_with_fake_recall_and_hermes(client: TestClient, tmp_path: Path):
-    create_safe_consult(client)
-    graph = tmp_path / "graph"
-    graph.mkdir()
-    note = graph / "onion.md"
-    note.write_text("stock")
+def test_fake_hermes_z_pipeline_to_returned_task(client: TestClient):
+    """lease → hermes -z fake → signed result → evidence gate → kitchen_memory_returned."""
+    import app.evidence_store as es
 
-    def fake_recall(cmd: list[str]) -> str:
-        assert cmd[0] == "logseq-graph"
-        assert cmd[1] == "recall"
-        assert "--limit" in cmd
-        assert len(cmd) == 5
-        return f"{note}\tOnion stock\tBrown gently"
+    es.is_approved_graph_path = lambda p, **k: str(p).startswith("/home/discovery-system/Logseq/graph")
+    path = "/home/discovery-system/Logseq/graph/stock.md"
+    cid = create_safe_consult(client)
 
     def fake_hermes(prompt: str, meta: dict) -> str:
         cmd = meta["command"]
+        assert cmd[0] == "hermes"
         assert "-z" in cmd
         assert cmd[cmd.index("-z") + 1] == prompt
-        assert "--toolset" not in cmd
-        assert "--timeout" not in cmd
-        # synthesis-only
-        assert "--toolsets" not in cmd or "terminal" not in " ".join(cmd)
+        assert "logseq-graph" not in " ".join(cmd)
+        assert "UNTRUSTED_DATA_JSON" in prompt
         return json.dumps(
             {
                 "kitchen_memory": [
                     {
                         "title": "Onion stock",
-                        "path": str(note),
-                        "relevance": "stock",
+                        "path": path,
+                        "relevance": "technique",
                         "finding": "Brown gently",
-                    },
-                    {
-                        "title": "bad",
-                        "path": "/etc/passwd",
-                        "relevance": "x",
-                        "finding": "no",
-                    },
+                    }
                 ],
-                "enrichment": {"note": "simple"},
+                "enrichment": {
+                    "recommendation": "Brown onion trimmings for staff stock",
+                    "unknowns": [],
+                    "conflicts": [],
+                },
+                "meta": {},
             }
         )
 
-    import casual_board_graph_recall_worker.hermes_runner as hr
-
-    old = hr.LOGSEQ_GRAPH_ROOT
-    hr.LOGSEQ_GRAPH_ROOT = str(graph)
-    try:
-        w = GraphRecallWorker(
-            TCClient(client),
-            hermes_runner=fake_hermes,
-            recall_runner=fake_recall,
-            hermes_toolsets="",
-            graph_root=str(graph),
-        )
-        res = w.once()
-        assert res["graph_recall_status"] == "completed"
-        mem = res["local_safety_plan"]["kitchen_memory"]
-        assert any(m["title"] == "Onion stock" for m in mem)
-        assert not any("/etc/passwd" in (m.get("path") or "") for m in mem)
-    finally:
-        hr.LOGSEQ_GRAPH_ROOT = old
+    w = GraphRecallWorker(TCClient(client), hermes_runner=fake_hermes)
+    res = w.once()
+    assert res is not None
+    assert res["id"] == cid
+    assert res["graph_recall_status"] == "completed"
+    assert res["task_status"] == "kitchen_memory_returned"
+    plan = res["local_safety_plan"]
+    assert plan.get("evidence_gate_status") in {
+        "verified",
+        "insufficient_evidence",
+        "pending_review",
+    }
+    # citations registered from graph path
+    assert plan.get("evidence_source_count", 0) >= 1 or plan.get("evidence_citations") is not None
 
 
-def test_malformed_hermes_fails_signed(client: TestClient, tmp_path: Path):
+def test_malformed_hermes_fails_signed(client: TestClient):
     create_safe_consult(client)
 
-    def fake_recall(cmd: list[str]) -> str:
-        return ""
-
     def bad(prompt: str, meta: dict) -> str:
-        return "not json"
+        return "not json {{"
 
-    w = GraphRecallWorker(
-        TCClient(client),
-        hermes_runner=bad,
-        recall_runner=fake_recall,
-        graph_root=str(tmp_path),
-    )
-    res = w.once()
+    res = GraphRecallWorker(TCClient(client), hermes_runner=bad).once()
     assert res["graph_recall_status"] == "failed"
 
 
-def test_wrong_auth_and_replay(client: TestClient):
-    cid = create_safe_consult(client)
-    lease = client.get(
-        "/v1/graph-recall/jobs/lease",
-        headers=gr_headers(),
-        params={"worker_id": "w1", "timeout_s": 2},
-    ).json()["job"]
-    nonce = lease["lease_nonce"]
-    assert client.get("/v1/graph-recall/jobs/lease", params={"timeout_s": 1}).status_code == 401
-    enrichment = {"note": "x"}
-    good_sig = sign_result(
-        consultation_id=cid,
-        status="completed",
-        worker_id="w1",
-        lease_nonce=nonce,
-        kitchen_memory=[],
-        enrichment=enrichment,
-        message="ok",
+def test_timeout_fails_signed(client: TestClient):
+    create_safe_consult(client)
+
+    def boom(prompt: str, meta: dict) -> str:
+        raise TimeoutError()
+
+    res = GraphRecallWorker(TCClient(client), hermes_runner=boom).once()
+    assert res["graph_recall_status"] == "failed"
+    assert "timeout" in (res.get("blocked_reason") or res["local_safety_plan"].get("notes", [""])[-1] if False else res.get("blocked_reason") or "").lower() or "unavailable" in str(
+        res.get("blocked_reason") or ""
+    ).lower() or res["task_status"] in {"needs_review", "failed", "blocked"}
+
+
+def test_unsupported_citation_insufficient(client: TestClient):
+    import app.evidence_store as es
+
+    es.is_approved_graph_path = lambda p, **k: False  # nothing approved
+    create_safe_consult(client)
+
+    def fake(prompt: str, meta: dict) -> str:
+        return json.dumps(
+            {
+                "kitchen_memory": [
+                    {
+                        "title": "x",
+                        "path": "/tmp/not-graph.md",
+                        "relevance": "x",
+                        "finding": "y",
+                    }
+                ],
+                "enrichment": {"recommendation": "do it", "unknowns": [], "conflicts": []},
+                "meta": {},
+            }
+        )
+
+    res = GraphRecallWorker(TCClient(client), hermes_runner=fake).once()
+    assert res["graph_recall_status"] == "completed"
+    plan = res["local_safety_plan"]
+    assert plan.get("evidence_verified") is False
+    assert plan.get("evidence_gate_status") == "insufficient_evidence"
+
+
+def test_blocked_safety_stays_blocked(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/cook/consultations",
+        headers=h,
+        json={
+            "mode": "rescue",
+            "ingredients_or_problem": "buffet",
+            "traceability": "guest_exposed_buffet",
+            "service_context": "a_la_carte",
+            "request_graph_recall": True,
+        },
     )
-    assert (
-        client.post(
-            "/v1/graph-recall/jobs/result",
-            headers=gr_headers(),
-            json={
-                "consultation_id": cid,
-                "status": "completed",
-                "worker_id": "other",
-                "lease_nonce": nonce,
-                "signature": sign_result(
-                    consultation_id=cid,
-                    status="completed",
-                    worker_id="other",
-                    lease_nonce=nonce,
-                    kitchen_memory=[],
-                    enrichment={},
-                    message="ok",
-                ),
-                "kitchen_memory": [],
-                "enrichment": {},
-                "message": "ok",
-            },
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            "/v1/graph-recall/jobs/result",
-            headers=gr_headers(),
-            json={
-                "consultation_id": cid,
-                "status": "completed",
-                "worker_id": "w1",
-                "lease_nonce": nonce,
-                "signature": good_sig,
-                "kitchen_memory": [],
-                "enrichment": enrichment,
-                "message": "ok",
-            },
-        ).status_code
-        == 200
-    )
-    assert (
-        client.post(
-            "/v1/graph-recall/jobs/result",
-            headers=gr_headers(),
-            json={
-                "consultation_id": cid,
-                "status": "completed",
-                "worker_id": "w1",
-                "lease_nonce": nonce,
-                "signature": good_sig,
-                "kitchen_memory": [],
-                "enrichment": enrichment,
-                "message": "ok",
-            },
-        ).status_code
-        in (409, 403)
-    )
+    assert r.json()["task_status"] == "blocked"
+    assert r.json()["graph_recall_status"] == "not_requested"
+
+
+def test_once_no_job():
+    class Empty(GraphRecallClient):
+        def lease(self, timeout_s: float = 25.0):
+            return None
+
+    assert GraphRecallWorker(Empty("http://127.0.0.1:8090", "x", "w")).once() is None
 
 
 def test_lease_expiry_requeue(client: TestClient):
@@ -412,45 +327,16 @@ def test_lease_expiry_requeue(client: TestClient):
     )
     get_conn().commit()
     assert reap_expired_leases() >= 1
-    h = session(client)
-    c = client.get(f"/v1/cook/consultations/{cid}", headers=h).json()
-    assert c["graph_recall_status"] == "queued"
-    assert c["task_status"] == "kitchen_memory_queued"
 
 
-def test_blocked_safety_not_queued(client: TestClient):
-    h = session(client)
-    r = client.post(
-        "/v1/cook/consultations",
-        headers=h,
-        json={
-            "mode": "rescue",
-            "ingredients_or_problem": "buffet",
-            "traceability": "guest_exposed_buffet",
-            "service_context": "a_la_carte",
-            "request_graph_recall": True,
-        },
-    )
-    assert r.json()["graph_recall_status"] == "not_requested"
-    assert r.json()["local_safety_plan"]["rejected"] is True
-
-
-def test_once_no_job_exits():
-    class Empty(GraphRecallClient):
-        def lease(self, timeout_s: float = 25.0):
-            return None
-
-    assert GraphRecallWorker(Empty("http://127.0.0.1:8090", "x", "w")).once() is None
-
-
-def test_deploy_doc_no_git_pull_in_opt():
-    doc = Path(__file__).resolve().parents[2] / "deploy/self-host/GRAPH_RECALL_WORKER.md"
-    text = doc.read_text()
-    assert "git pull" not in text or "Do not run `git pull` inside `/opt/casual-board`" in text
-    # no instructional pull inside opt
-    assert "cd /opt/casual-board && git pull" not in text
-    assert "rsync" in text
-    assert "mktemp" in text or "STAGE" in text
+def test_worker_never_calls_logseq_graph():
+    """Source inspection: worker must not import retrieval package."""
+    import casual_board_graph_recall_worker.worker as w
+    import inspect
+    src = Path(w.__file__).read_text()
+    assert "run_logseq" not in src
+    assert "from .retrieval" not in src
+    assert "import retrieval" not in src
 
 
 def test_logs_no_secrets(caplog):

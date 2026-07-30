@@ -370,7 +370,12 @@ def merge_kitchen_memory(
         except Exception:  # noqa: BLE001
             pass
 
-    rec = plan.recommended_action or enrichment.get("note") or ""
+    rec = (
+        (enrichment or {}).get("recommendation")
+        or (enrichment or {}).get("note")
+        or plan.recommended_action
+        or ""
+    )
     verdict = str((plan.decision or {}).get("verdict") or "unknown")
     gated = apply_evidence_gate_to_consultation(
         c.id,

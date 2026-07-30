@@ -6,7 +6,6 @@ import hashlib
 import re
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
 
 from .db import dumps, get_conn, loads
 from .evidence_models import (
@@ -19,7 +18,6 @@ from .evidence_models import (
     SourceType,
 )
 
-# Paths like /Users/... are never canonical citations
 _LEGACY_PATH = re.compile(
     r"^/(Users|home/(?!discovery-system)|var/folders|tmp|private)/",
     re.I,
@@ -39,28 +37,22 @@ def is_legacy_local_path(path: str) -> bool:
     p = (path or "").strip()
     if not p:
         return False
-    if _LEGACY_PATH.search(p):
-        return True
     if p.startswith("/Users/"):
+        return True
+    if _LEGACY_PATH.search(p):
         return True
     return False
 
 
-def is_approved_graph_path(path: str) -> bool:
-    p = (path or "").strip()
+def is_approved_graph_path(path: str, graph_root: str | None = None) -> bool:
+    """String-prefix check only — does not require the path to exist on this host."""
+    p = (path or "").strip().replace("\\", "/")
     if not p:
         return False
-    try:
-        from pathlib import Path
-
-        root = Path(APPROVED_GRAPH_ROOT).resolve()
-        cand = Path(p).expanduser()
-        if not cand.is_absolute():
-            cand = root / cand
-        resolved = cand.resolve()
-        return str(resolved).startswith(str(root) + "/") or str(resolved) == str(root)
-    except Exception:  # noqa: BLE001
-        return p.startswith(APPROVED_GRAPH_ROOT)
+    root = (graph_root or APPROVED_GRAPH_ROOT).rstrip("/")
+    if p == root or p.startswith(root + "/"):
+        return True
+    return False
 
 
 def content_hash(text: str) -> str:
@@ -99,7 +91,6 @@ def save_source(src: CanonicalSource) -> CanonicalSource:
 
 
 def create_source(body: CanonicalSourceCreate) -> CanonicalSource:
-    # Migrate legacy paths as unverified only
     graph_path = body.graph_path or ""
     notes = body.notes or ""
     st = body.source_type
@@ -108,7 +99,7 @@ def create_source(body: CanonicalSourceCreate) -> CanonicalSource:
         st = SourceType.legacy_unverified
         tier = AuthorityTier.tier_5_inspiration
         notes = (notes + " | migrated as unverified legacy path").strip(" |")
-        graph_path = ""  # do not treat as citation path
+        graph_path = ""
     src = CanonicalSource(
         title=body.title,
         publisher_or_author=body.publisher_or_author,
@@ -250,7 +241,6 @@ def ensure_source_for_graph_hit(
     excerpt: str,
     consultation_id: str | None = None,
 ) -> tuple[CanonicalSource | None, SourceEvidence | None]:
-    """Register approved graph path as internal Logseq card (tier 2) or legacy unverified."""
     if is_legacy_local_path(path):
         src = save_source(
             CanonicalSource(
@@ -261,7 +251,6 @@ def ensure_source_for_graph_hit(
                 active=True,
             )
         )
-        # evidence without path
         ev = create_evidence(
             SourceEvidenceCreate(
                 source_id=src.id,
@@ -271,49 +260,53 @@ def ensure_source_for_graph_hit(
         )
         return src, ev
 
-    if not is_approved_graph_path(path):
+    if path and not is_approved_graph_path(path):
         return None, None
 
-    # Reuse source by graph_path if present
-    for s in list_sources(active_only=False):
-        if s.graph_path == path and s.active:
-            ev = create_evidence(
-                SourceEvidenceCreate(
-                    source_id=s.id,
-                    excerpt=(excerpt or title)[:500],
-                    graph_path=path,
-                    source_location=path,
-                    consultation_id=consultation_id,
+    if path:
+        for s in list_sources(active_only=False):
+            if s.graph_path == path and s.active:
+                ev = create_evidence(
+                    SourceEvidenceCreate(
+                        source_id=s.id,
+                        excerpt=(excerpt or title)[:500],
+                        graph_path=path,
+                        source_location=path,
+                        consultation_id=consultation_id,
+                    )
                 )
+                return s, ev
+
+        src = save_source(
+            CanonicalSource(
+                title=title or path.rsplit("/", 1)[-1],
+                publisher_or_author="Graph Recall kitchen graph",
+                source_type=SourceType.logseq_card,
+                authority_tier=AuthorityTier.tier_2_internal,
+                graph_path=path,
+                checked_at=_now(),
+                content_hash=content_hash(path + excerpt),
+                active=True,
+                notes="auto-registered from Graph Recall citation path",
             )
-            return s, ev
-
-    src = save_source(
-        CanonicalSource(
-            title=title or path.rsplit("/", 1)[-1],
-            publisher_or_author="Logseq kitchen graph",
-            source_type=SourceType.logseq_card,
-            authority_tier=AuthorityTier.tier_2_internal,
-            graph_path=path,
-            checked_at=_now(),
-            content_hash=content_hash(path + excerpt),
-            active=True,
-            notes="auto-registered from approved graph path",
         )
-    )
-    ev = create_evidence(
-        SourceEvidenceCreate(
-            source_id=src.id,
-            excerpt=(excerpt or title)[:500],
-            graph_path=path,
-            source_location=path,
-            consultation_id=consultation_id,
+        ev = create_evidence(
+            SourceEvidenceCreate(
+                source_id=src.id,
+                excerpt=(excerpt or title)[:500],
+                graph_path=path,
+                source_location=path,
+                consultation_id=consultation_id,
+            )
         )
-    )
-    return src, ev
+        return src, ev
+
+    return None, None
 
 
-def citation_from_source(src: CanonicalSource, excerpt: str = "", evidence_id: str | None = None) -> Citation:
+def citation_from_source(
+    src: CanonicalSource, excerpt: str = "", evidence_id: str | None = None
+) -> Citation:
     loc = src.graph_path or src.url or src.doi or ""
     return Citation(
         source_id=src.id,
@@ -326,7 +319,6 @@ def citation_from_source(src: CanonicalSource, excerpt: str = "", evidence_id: s
 
 
 def seed_official_fsa_placeholder() -> CanonicalSource:
-    """Register UK FSA as Tier-1 template (URL only; content fetched only via research module)."""
     for s in list_sources(active_only=False):
         if "food.gov.uk" in (s.url or ""):
             return s

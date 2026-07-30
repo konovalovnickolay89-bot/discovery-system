@@ -1,4 +1,4 @@
-"""Hermes synthesis invocation matching the real CLI: -z/--oneshot, --toolsets."""
+"""Hermes Graph Recall invocation: HERMES_HOME=... hermes -z <PROMPT>."""
 
 from __future__ import annotations
 
@@ -8,19 +8,9 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
-from . import LOGSEQ_GRAPH_ROOT as DEFAULT_LOGSEQ_ROOT
-
 log = logging.getLogger("graph_recall_worker.hermes")
-
-# Overridable for tests
-LOGSEQ_GRAPH_ROOT = DEFAULT_LOGSEQ_ROOT
-
-# Default: no toolsets → synthesis-only (no terminal/file capability).
-# Override with CASUAL_BOARD_HERMES_TOOLSETS after verifying: hermes tools list
-DEFAULT_HERMES_TOOLSETS = ""
 
 HermesRunnerFn = Callable[[str, dict[str, Any]], str]
 
@@ -40,14 +30,13 @@ class InvalidHermesCLIError(ValueError):
 
 
 def validate_hermes_argv(cmd: list[str]) -> None:
-    """Catch invalid CLI shapes before install/run (no --toolset, no hermes --timeout)."""
+    """Real CLI: hermes -z / --oneshot <PROMPT>. No --toolset, no Hermes --timeout."""
     if not cmd or cmd[0] != "hermes":
         raise InvalidHermesCLIError("command must start with hermes")
     if "--toolset" in cmd:
-        raise InvalidHermesCLIError("unsupported flag --toolset (use --toolsets)")
+        raise InvalidHermesCLIError("unsupported flag --toolset (use profile tools via HERMES_HOME)")
     if "--timeout" in cmd:
         raise InvalidHermesCLIError("unsupported flag --timeout (use Python subprocess timeout)")
-    # -z / --oneshot must be followed by a prompt argument
     if "-z" in cmd:
         i = cmd.index("-z")
         if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
@@ -58,37 +47,17 @@ def validate_hermes_argv(cmd: list[str]) -> None:
             raise InvalidHermesCLIError("--oneshot requires a prompt argument")
     else:
         raise InvalidHermesCLIError("missing -z / --oneshot")
-    if "--toolsets" in cmd:
-        i = cmd.index("--toolsets")
-        if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
-            raise InvalidHermesCLIError("--toolsets requires a value")
-        tools = cmd[i + 1].lower()
-        # Refuse terminal/file capability in synthesis process
-        for banned in ("terminal", "shell", "file", "filesystem", "bash", "exec"):
-            if banned in tools.split(","):
-                raise InvalidHermesCLIError(f"toolset capability not allowed: {banned}")
 
 
-def build_hermes_command(
-    prompt: str,
-    *,
-    toolsets: str | None = None,
-) -> list[str]:
+def build_hermes_command(prompt: str, *, toolsets: str | None = None) -> list[str]:
     """
-    Real Hermes CLI:
-      hermes -z / --oneshot <PROMPT>
-      hermes -t / --toolsets <comma-separated>
-    Prompt is an argv element (not stdin). No --timeout flag.
+    Graph Recall invocation:
+      HERMES_HOME=... hermes -z '<structured culinary enquiry>'
+    Prompt is an argv element (not stdin). Tools come from the graph-recall profile.
+    Casual Board does not pass --toolsets or call logseq-graph.
     """
-    ts = toolsets if toolsets is not None else os.environ.get(
-        "CASUAL_BOARD_HERMES_TOOLSETS", DEFAULT_HERMES_TOOLSETS
-    )
-    ts = (ts or "").strip()
+    del toolsets  # intentionally unused — profile owns tools
     cmd: list[str] = ["hermes", "-z", prompt]
-    # Prefer no tools (synthesis-only from retrieved context already in prompt).
-    # If operator sets toolsets, still reject terminal/file via validate.
-    if ts:
-        cmd.extend(["--toolsets", ts])
     validate_hermes_argv(cmd)
     return cmd
 
@@ -118,52 +87,8 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def validate_logseq_path(path: str, graph_root: str | None = None) -> bool:
-    root_s = graph_root if graph_root is not None else LOGSEQ_GRAPH_ROOT
-    if not path or not isinstance(path, str):
-        return False
-    try:
-        root = Path(root_s).resolve()
-        p = Path(path).expanduser()
-        if not p.is_absolute():
-            p = root / p
-        resolved = p.resolve()
-        return str(resolved).startswith(str(root) + os.sep) or str(resolved) == str(root)
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def filter_kitchen_memory(
-    items: list[Any],
-    *,
-    graph_root: str | None = None,
-) -> list[dict[str, str]]:
-    root = graph_root if graph_root is not None else LOGSEQ_GRAPH_ROOT
-    out: list[dict[str, str]] = []
-    for raw in items or []:
-        if not isinstance(raw, dict):
-            continue
-        title = str(raw.get("title") or "").strip()
-        path = str(raw.get("path") or "").strip()
-        relevance = str(raw.get("relevance") or "").strip()
-        finding = str(raw.get("finding") or raw.get("excerpt") or "").strip()
-        if not title or not path:
-            continue
-        if not validate_logseq_path(path, root):
-            continue
-        out.append(
-            {
-                "title": title,
-                "path": path,
-                "relevance": relevance,
-                "excerpt": finding,
-                "finding": finding,
-            }
-        )
-    return out
-
-
-def validate_hermes_output(parsed: dict[str, Any] | None) -> tuple[bool, str | None, dict[str, Any]]:
+def validate_graph_recall_output(parsed: dict[str, Any] | None) -> tuple[bool, str | None, dict[str, Any]]:
+    """Pydantic-like structural validation of Hermes Graph Recall JSON."""
     if not parsed or not isinstance(parsed, dict):
         return False, "malformed_json", {}
     mem = parsed.get("kitchen_memory")
@@ -179,9 +104,24 @@ def validate_hermes_output(parsed: dict[str, Any] | None) -> tuple[bool, str | N
     opts = enrichment.get("options")
     if isinstance(opts, list) and len(opts) > 3:
         enrichment = {**enrichment, "options": opts[:3]}
-    filtered = filter_kitchen_memory(mem, graph_root=LOGSEQ_GRAPH_ROOT)
+    cleaned_mem = []
+    for raw in mem:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or "").strip()
+        if not title:
+            continue
+        cleaned_mem.append(
+            {
+                "title": title,
+                "path": str(raw.get("path") or "").strip(),
+                "relevance": str(raw.get("relevance") or "").strip(),
+                "finding": str(raw.get("finding") or raw.get("excerpt") or "").strip(),
+                "excerpt": str(raw.get("finding") or raw.get("excerpt") or "").strip(),
+            }
+        )
     return True, None, {
-        "kitchen_memory": filtered,
+        "kitchen_memory": cleaned_mem,
         "enrichment": enrichment,
         "meta": parsed.get("meta") if isinstance(parsed.get("meta"), dict) else {},
     }
@@ -200,7 +140,7 @@ def run_hermes(
     t0 = time.monotonic()
     try:
         cmd = build_hermes_command(prompt, toolsets=toolsets)
-    except InvalidHermesCLIError as e:
+    except InvalidHermesCLIError:
         return HermesResult(
             ok=False,
             raw_text="",
@@ -214,7 +154,7 @@ def run_hermes(
         try:
             text = runner(prompt, {"command": cmd, "timeout_s": timeout_s})
             parsed = extract_json_object(text)
-            ok, cat, cleaned = validate_hermes_output(parsed)
+            ok, cat, cleaned = validate_graph_recall_output(parsed)
             return HermesResult(
                 ok=ok,
                 raw_text=text,
@@ -250,11 +190,13 @@ def run_hermes(
         "CASUAL_BOARD_TOKEN",
         "CASUAL_BOARD_BRIDGE_TOKEN",
         "CASUAL_BOARD_UI_PASSWORD",
+        "CASUAL_BOARD_EVIDENCE_AI_API_KEY",
+        "OPENAI_API_KEY",
+        "XAI_API_KEY",
     ):
         run_env.pop(k, None)
 
     try:
-        # Prompt is argv to -z; stdin not used. Timeout is Python-side only.
         proc = subprocess.run(
             cmd,
             shell=False,
@@ -265,7 +207,6 @@ def run_hermes(
             check=False,
         )
         if proc.returncode != 0 and not proc.stdout:
-            # Argument errors from Hermes
             err = (proc.stderr or "").lower()
             if "unrecognized" in err or "invalid" in err or "usage" in err:
                 return HermesResult(
@@ -285,7 +226,7 @@ def run_hermes(
                 command=cmd,
             )
         parsed = extract_json_object(proc.stdout or "")
-        ok, cat, cleaned = validate_hermes_output(parsed)
+        ok, cat, cleaned = validate_graph_recall_output(parsed)
         return HermesResult(
             ok=ok,
             raw_text=proc.stdout or "",
@@ -324,15 +265,10 @@ def run_hermes(
 
 
 def dry_run_hermes_parser(prompt: str = "ping") -> tuple[bool, str]:
-    """
-    Local check: build argv and optionally invoke hermes with a harmless prompt.
-    Returns (ok, message). Does not claim restricted toolsets without hermes tools list.
-    """
     try:
-        cmd = build_hermes_command(prompt, toolsets="")
+        cmd = build_hermes_command(prompt)
     except InvalidHermesCLIError as e:
         return False, f"argv invalid: {e}"
-    # Prefer real binary if present
     try:
         proc = subprocess.run(
             cmd,
@@ -342,15 +278,12 @@ def dry_run_hermes_parser(prompt: str = "ping") -> tuple[bool, str]:
             timeout=5,
             check=False,
         )
-        err = (proc.stderr or "") + (proc.stdout or "")
-        low = err.lower()
-        if "unrecognized arguments" in low or "invalid option" in low or "no such option" in low:
+        err = ((proc.stderr or "") + (proc.stdout or "")).lower()
+        if "unrecognized arguments" in err or "invalid option" in err or "no such option" in err:
             return False, f"hermes rejected argv: {err[:200]}"
-        # hermes missing handled below
         return True, "hermes accepted argv shape (or ran without arg error)"
     except FileNotFoundError:
-        # Binary not in this sandbox — argv still validated by our parser
-        return True, "hermes not installed here; argv validated without --toolset/--timeout"
+        return True, "hermes not installed here; argv validated (hermes -z <prompt>)"
     except subprocess.TimeoutExpired:
         return True, "hermes started (timeout) — no argument error"
     except Exception as e:  # noqa: BLE001

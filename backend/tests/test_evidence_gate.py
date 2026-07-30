@@ -155,42 +155,6 @@ def test_conflicting_sources_must_disclose():
     assert any("conflict" in u.lower() for u in result.unknowns_or_conflicts)
 
 
-def test_search_fallback_returns_known_graph_card():
-    import sys
-    from pathlib import Path as P
-
-    sys.path.insert(0, str(P(__file__).resolve().parents[2] / "debian-graph-recall-worker"))
-    from casual_board_graph_recall_worker.retrieval import run_logseq_recall
-    import casual_board_graph_recall_worker.hermes_runner as hr
-
-    graph = "/home/discovery-system/Logseq/graph"
-    note = f"{graph}/onion-stock.md"
-    hr.LOGSEQ_GRAPH_ROOT = graph
-
-    calls = []
-
-    def runner(cmd: list[str]) -> str:
-        calls.append(cmd[1])
-        if cmd[1] == "recall":
-            return ""  # empty → fallback search
-        assert cmd[1] == "search"
-        return f"{note}\tOnion stock\tBrown gently"
-
-    # monkeypatch path validation
-    orig = hr.validate_logseq_path
-    hr.validate_logseq_path = lambda path, graph_root=None: str(path).startswith(graph)
-    try:
-        items = run_logseq_recall(
-            {"consultation": {"mode": "build", "ingredients_or_problem": "onion"}},
-            graph_root=graph,
-            runner=runner,
-        )
-        assert calls == ["recall", "search"]
-        assert items
-        assert items[0]["path"] == note
-    finally:
-        hr.validate_logseq_path = orig
-
 
 def test_pending_review_research(client: TestClient):
     assert url_allowed("https://www.food.gov.uk/safety-hygiene")

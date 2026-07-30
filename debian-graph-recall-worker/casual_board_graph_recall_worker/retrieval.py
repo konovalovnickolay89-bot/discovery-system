@@ -1,3 +1,7 @@
+"""DEPRECATED — Casual Board worker no longer calls logseq-graph.
+Graph Recall Hermes profile owns retrieval. Kept only for reference.
+"""
+
 """Read-only culinary retrieval via logseq-graph recall, then search (shell=False)."""
 
 from __future__ import annotations

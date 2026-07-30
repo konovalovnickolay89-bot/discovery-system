@@ -1,12 +1,9 @@
-"""PydanticAI structures an answer; Pydantic + registry validate evidence. Not truth itself."""
+"""Pydantic validates Graph Recall JSON; optional PydanticAI reviewer; gate is final authority."""
 
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Callable
-
-from pydantic import ValidationError
 
 from .evidence_models import (
     SAFETY_CLAIM_MARKERS,
@@ -15,20 +12,19 @@ from .evidence_models import (
     EvidenceGatedResult,
     ModelMeta,
     ResearchStatus,
+    SourceType,
 )
 from .evidence_store import (
     citation_from_source,
     ensure_source_for_graph_hit,
     get_source,
-    is_approved_graph_path,
     is_legacy_local_path,
     link_consultation_evidence,
-    list_evidence_for_consultation,
+    list_sources,
 )
 
 log = logging.getLogger("casual_board.evidence_gate")
 
-# Injectable structured generator for tests (fake PydanticAI)
 EvidenceStructurerFn = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
@@ -48,6 +44,16 @@ def _has_tier1(citations: list) -> bool:
     return False
 
 
+def _source_usable_for_citation(src) -> bool:
+    if not src or not src.active:
+        return False
+    if src.source_type == SourceType.legacy_unverified:
+        return False
+    if src.authority_tier == AuthorityTier.tier_5_inspiration:
+        return False
+    return True
+
+
 def structure_with_pydantic_ai(
     *,
     recommendation: str,
@@ -57,64 +63,38 @@ def structure_with_pydantic_ai(
     consultation_id: str,
     local_blocked: bool,
     structurer: EvidenceStructurerFn | None = None,
+    registered_sources: list[dict[str, Any]] | None = None,
+    reviewer=None,
 ) -> tuple[dict[str, Any], ModelMeta]:
-    """
-    Produce a structured draft. used_ai True only for live provider success.
-    Default uses deterministic function model (no network).
-    """
-    meta = ModelMeta(provider="function", used_ai=False, model="evidence-function")
+    from .evidence_reviewer import EvidenceReviewerUnavailable, review_graph_recall_output
 
-    def _default(prompt: str, ctx: dict[str, Any]) -> dict[str, Any]:
-        mem = ctx.get("kitchen_memory") or []
-        cites = []
-        for m in mem:
-            cites.append(
-                {
-                    "source_id": m.get("source_id") or "",
-                    "title": m.get("title") or "note",
-                    "path_or_url": m.get("path") or m.get("path_or_url") or "",
-                    "excerpt": m.get("excerpt") or m.get("finding") or "",
-                    "authority_tier": m.get("authority_tier") or 2,
-                }
-            )
-        conf = 0.55 if cites else 0.15
-        return {
-            "recommendation": ctx.get("recommendation") or "",
-            "safety_verdict": ctx.get("safety_verdict") or "unknown",
-            "citations": cites,
-            "confidence": conf,
-            "unknowns_or_conflicts": ctx.get("unknowns") or [],
-            "research_status": "not_needed",
-        }
-
-    ctx = {
-        "recommendation": recommendation,
-        "safety_verdict": safety_verdict,
-        "kitchen_memory": kitchen_memory,
-        "enrichment": enrichment,
-        "local_blocked": local_blocked,
-        "unknowns": list(enrichment.get("unknowns") or []),
-    }
-    prompt = f"Structure evidence-gated culinary answer for {consultation_id}"
+    reg = registered_sources or []
 
     if structurer is not None:
-        raw = structurer(prompt, ctx)
-        meta = ModelMeta(provider="test", used_ai=False, model="fake")
-        return raw, meta
+        ctx = {
+            "recommendation": recommendation,
+            "safety_verdict": safety_verdict,
+            "kitchen_memory": kitchen_memory,
+            "enrichment": enrichment,
+            "local_blocked": local_blocked,
+            "unknowns": list(enrichment.get("unknowns") or [])
+            + list(enrichment.get("conflicts") or []),
+        }
+        raw = structurer(f"Structure evidence for {consultation_id}", ctx)
+        return raw, ModelMeta(provider="test", used_ai=False, model="fake")
 
-    # Optional live PydanticAI — function model by default
     try:
-        from .config import get_settings
-
-        settings = get_settings()
-        if settings.enable_pydantic_ai and settings.resolved_ai_provider() in {"openai", "xai"}:
-            # Live path reserved; still structure via deterministic for safety without network in tests
-            pass
-    except Exception:  # noqa: BLE001
-        pass
-
-    raw = _default(prompt, ctx)
-    return raw, meta
+        raw, meta = review_graph_recall_output(
+            kitchen_memory=kitchen_memory,
+            enrichment=enrichment,
+            registered_sources=reg,
+            recommendation=recommendation,
+            safety_verdict=safety_verdict,
+            reviewer=reviewer,
+        )
+        return raw, meta
+    except EvidenceReviewerUnavailable as e:
+        raise e
 
 
 def register_memory_as_evidence(
@@ -122,7 +102,6 @@ def register_memory_as_evidence(
     *,
     consultation_id: str,
 ) -> list[dict[str, Any]]:
-    """Attach registry source_id / tier to each memory item; drop bad paths."""
     out: list[dict[str, Any]] = []
     for m in kitchen_memory or []:
         title = str(m.get("title") or "note")
@@ -132,7 +111,6 @@ def register_memory_as_evidence(
             src, ev = ensure_source_for_graph_hit(
                 title=title, path=path, excerpt=excerpt, consultation_id=consultation_id
             )
-            # legacy — not usable as professional citation for safety
             out.append(
                 {
                     "title": title,
@@ -146,12 +124,21 @@ def register_memory_as_evidence(
                 }
             )
             continue
-        if path and not is_approved_graph_path(path):
-            continue  # unsupported path
         src, ev = ensure_source_for_graph_hit(
             title=title, path=path, excerpt=excerpt, consultation_id=consultation_id
         )
         if not src:
+            out.append(
+                {
+                    "title": title,
+                    "path": path,
+                    "excerpt": excerpt,
+                    "relevance": m.get("relevance") or "",
+                    "source_id": "",
+                    "authority_tier": None,
+                    "unsupported_path": True,
+                }
+            )
             continue
         out.append(
             {
@@ -174,9 +161,7 @@ def validate_gated_result(
     local_blocked: bool,
     research_status: ResearchStatus = ResearchStatus.not_needed,
     model_meta: ModelMeta | None = None,
-    disclose_conflicts: bool | None = None,
 ) -> EvidenceGatedResult:
-    """Reject/downgrade when evidence rules fail. Blocked local safety always wins."""
     if local_blocked:
         return EvidenceGatedResult(
             recommendation=str(raw.get("recommendation") or "Blocked by local safety"),
@@ -190,7 +175,6 @@ def validate_gated_result(
             verified_for_professional_use=False,
         )
 
-    # Resolve citations against registry
     resolved = []
     unresolved = []
     for c in raw.get("citations") or []:
@@ -203,38 +187,44 @@ def validate_gated_result(
             continue
         src = get_source(sid) if sid else None
         if not src and path:
-            # try match registered memory
             for m in kitchen_memory_registered:
                 if m.get("path") == path and m.get("source_id"):
                     src = get_source(m["source_id"])
-                    sid = m["source_id"]
                     break
         if not src:
             unresolved.append(f"unresolved citation: {c.get('title') or path or sid}")
             continue
-        if not src.active:
-            unresolved.append(f"inactive source: {src.id}")
+        if not _source_usable_for_citation(src):
+            unresolved.append(f"source not usable for professional citation: {src.id}")
             continue
         resolved.append(
             citation_from_source(
                 src,
                 excerpt=str(c.get("excerpt") or ""),
-                evidence_id=c.get("evidence_id") or next(
-                    (m.get("evidence_id") for m in kitchen_memory_registered if m.get("source_id") == src.id),
+                evidence_id=c.get("evidence_id")
+                or next(
+                    (
+                        m.get("evidence_id")
+                        for m in kitchen_memory_registered
+                        if m.get("source_id") == src.id
+                    ),
                     None,
                 ),
             )
         )
 
-    # Also promote registered memory as citations if model omitted them
     if not resolved and kitchen_memory_registered:
         for m in kitchen_memory_registered:
-            if m.get("unverified_legacy"):
+            if m.get("unverified_legacy") or m.get("unsupported_path"):
+                if m.get("unsupported_path"):
+                    unresolved.append(f"unsupported path: {m.get('path')}")
                 continue
             src = get_source(m["source_id"]) if m.get("source_id") else None
-            if src and src.active:
+            if src and _source_usable_for_citation(src):
                 resolved.append(
-                    citation_from_source(src, excerpt=m.get("excerpt") or "", evidence_id=m.get("evidence_id"))
+                    citation_from_source(
+                        src, excerpt=m.get("excerpt") or "", evidence_id=m.get("evidence_id")
+                    )
                 )
 
     rec = str(raw.get("recommendation") or "").strip()
@@ -242,13 +232,6 @@ def validate_gated_result(
     unknowns = [str(u) for u in (raw.get("unknowns_or_conflicts") or [])]
     unknowns.extend(unresolved)
 
-    # Conflict disclosure: if multiple tiers disagree on safety language
-    safety_text = f"{rec} {verdict}".lower()
-    has_safety = _text_has_safety_claim(rec) or _text_has_safety_claim(verdict) or _text_has_safety_claim(
-        str(raw.get("claims") or "")
-    )
-
-    # Force conflict flag if caller reports conflict without disclosure
     conflicts_flag = bool(raw.get("sources_conflict"))
     if conflicts_flag and not any("conflict" in u.lower() for u in unknowns):
         unknowns.append("sources conflict — result did not disclose conflict")
@@ -264,6 +247,7 @@ def validate_gated_result(
             verified_for_professional_use=False,
         )
 
+    has_safety = _text_has_safety_claim(rec) or _text_has_safety_claim(verdict)
     if has_safety and not _has_tier1(resolved):
         unknowns.append("safety/allergen/storage/temperature/legal claim lacks Tier 1 citation")
         return EvidenceGatedResult(
@@ -334,19 +318,51 @@ def apply_evidence_gate_to_consultation(
     research_pending_ids: list[str] | None = None,
     structurer: EvidenceStructurerFn | None = None,
     sources_conflict: bool = False,
+    reviewer=None,
 ) -> EvidenceGatedResult:
+    from .evidence_reviewer import EvidenceReviewerUnavailable
+
     registered = register_memory_as_evidence(kitchen_memory, consultation_id=consultation_id)
-    raw, meta = structure_with_pydantic_ai(
-        recommendation=recommendation,
-        safety_verdict=safety_verdict,
-        kitchen_memory=registered,
-        enrichment=enrichment,
-        consultation_id=consultation_id,
-        local_blocked=local_blocked,
-        structurer=structurer,
-    )
+    reg_meta = [s.model_dump(mode="json") for s in list_sources(active_only=False)]
+
+    try:
+        raw, meta = structure_with_pydantic_ai(
+            recommendation=recommendation,
+            safety_verdict=safety_verdict,
+            kitchen_memory=registered,
+            enrichment=enrichment,
+            consultation_id=consultation_id,
+            local_blocked=local_blocked,
+            structurer=structurer,
+            registered_sources=reg_meta,
+            reviewer=reviewer,
+        )
+    except EvidenceReviewerUnavailable:
+        result = EvidenceGatedResult(
+            recommendation="Insufficient evidence (evidence reviewer unavailable)",
+            safety_verdict=safety_verdict,
+            citations=[],
+            confidence=0.0,
+            unknowns_or_conflicts=["evidence reviewer unavailable"],
+            research_status=research_status,
+            gate_status=EvidenceGateStatus.insufficient_evidence,
+            model_meta=ModelMeta(provider="unavailable", used_ai=False),
+            verified_for_professional_use=False,
+        )
+        link_consultation_evidence(
+            consultation_id,
+            evidence_ids=[m["evidence_id"] for m in registered if m.get("evidence_id")],
+            source_ids=list({m["source_id"] for m in registered if m.get("source_id")}),
+            gated_result=result.model_dump(mode="json"),
+            research_pending_ids=research_pending_ids or [],
+        )
+        return result
+
     if sources_conflict:
         raw = {**raw, "sources_conflict": True}
+    if enrichment.get("conflicts"):
+        raw = {**raw, "sources_conflict": True}
+
     result = validate_gated_result(
         raw,
         kitchen_memory_registered=registered,
