@@ -8,11 +8,14 @@ import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from .config import Settings, get_settings
 from .models import ActionRecord, Board, BoardStatus, Level, StreamEvent
 from .seed import build_seed_board
+
+if TYPE_CHECKING:
+    from .models import BridgeJob
 
 log = logging.getLogger("casual_board.store")
 
@@ -55,6 +58,19 @@ class BoardStore:
         path = self.settings.actions_path
         with path.open("a", encoding="utf-8") as f:
             f.write(action.model_dump_json() + "\n")
+
+    def append_job_log(self, job: BridgeJob) -> None:
+        path = self.settings.jobs_path
+        with path.open("a", encoding="utf-8") as f:
+            f.write(job.model_dump_json() + "\n")
+        event = StreamEvent(
+            type="job",
+            revision=self.get().meta.revision,
+            at=job.updated_at,
+            job=job,
+            detail=job.message or None,
+        )
+        self._emit(event)
 
     def _load(self) -> Board:
         path = self.settings.board_path
@@ -118,7 +134,6 @@ class BoardStore:
         with self._lock:
             if action_id in self._actions:
                 return self._actions[action_id]
-        # fallback scan jsonl
         path = self.settings.actions_path
         if not path.is_file():
             return None
@@ -181,6 +196,9 @@ def get_store() -> BoardStore:
 
 def reset_store_for_tests(tmp_path: Path) -> BoardStore:
     global _store
+    from .jobs import reset_jobs_for_tests
+
     settings = get_settings().model_copy(update={"data_dir": tmp_path})
     _store = BoardStore(settings)
+    reset_jobs_for_tests()
     return _store

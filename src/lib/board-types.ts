@@ -141,6 +141,7 @@ export type HealthResponse = {
   auth_mode?: string;
   pydantic?: string;
   pydantic_ai_available?: boolean;
+  ai_provider?: string;
   data_dir?: string;
   time?: string;
 };
@@ -156,6 +157,7 @@ export type CaptureResponse = {
   item: TodayItem;
   board: Board;
   used_ai: boolean;
+  ai_provider?: string;
 };
 
 export type CommandResponse = {
@@ -164,8 +166,14 @@ export type CommandResponse = {
     command: string;
     status: string;
     message: string;
+    job_id?: string | null;
   };
   board: Board | null;
+  job?: {
+    id: string;
+    status: string;
+    command: string;
+  } | null;
 };
 
 export type ChatResponse = {

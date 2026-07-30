@@ -1,5 +1,0 @@
-pydantic>=2.10
-pydantic-ai>=0.0.50
-fastapi>=0.115
-uvicorn[standard]>=0.32
-websockets>=12.0

@@ -3,7 +3,6 @@ import { validateApiConfig } from "@/lib/api-config";
 export type ApiFailureKind =
   | "misconfigured"
   | "unreachable"
-  | "auth"
   | "offline-cache";
 
 export function ApiFailureBanner({
@@ -23,9 +22,7 @@ export function ApiFailureBanner({
       ? "API not configured for production"
       : kind === "unreachable"
         ? "Cannot reach board API"
-        : kind === "auth"
-          ? "API authentication failed"
-          : "Showing last known board";
+        : "Showing last known board";
 
   const body =
     kind === "misconfigured"
@@ -34,28 +31,20 @@ export function ApiFailureBanner({
         : config.reason
       : kind === "unreachable"
         ? detail ||
-          "The FastAPI backend is not reachable from this page. " +
-            "On discovery-system.grok.me the API must be a separate https host " +
-            "(VITE_API_BASE_URL). Debian/CLI can still work offline from cache."
-        : kind === "auth"
-          ? detail || "Check VITE_API_TOKEN / CASUAL_BOARD_TOKEN."
-          : detail || "Live sync is down; values may be stale.";
+          "The FastAPI backend is not reachable. On discovery-system.grok.me " +
+            "set VITE_API_BASE_URL to your API https origin (no browser tokens)."
+        : detail || "Live sync is down; values may be stale.";
 
   return (
-    <div
-      className="api-failure-banner"
-      role="alert"
-      data-kind={kind}
-      aria-live="polite"
-    >
+    <div className="api-failure-banner" role="alert" data-kind={kind} aria-live="polite">
       <div className="api-failure-title">{title}</div>
       <p className="api-failure-body">{body}</p>
       <ul className="api-failure-hints">
         <li>
-          Web origin: <code>https://discovery-system.grok.me</code>
+          Web: <code>https://discovery-system.grok.me</code>
         </li>
         <li>
-          API must be external · set <code>VITE_API_BASE_URL</code> at build time
+          API via <code>VITE_API_BASE_URL</code> · never put owner/bridge tokens in the browser
         </li>
         {lastSync ? (
           <li>

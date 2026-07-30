@@ -10,9 +10,6 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator
 
 
-# ── Shared enums ───────────────────────────────────────────────────────
-
-
 class Level(str, Enum):
     info = "info"
     warn = "warn"
@@ -34,9 +31,6 @@ class ItemSource(str, Enum):
     bridge = "bridge"
     system = "system"
     capture = "capture"
-
-
-# ── Today ──────────────────────────────────────────────────────────────
 
 
 class RecipeSpine(BaseModel):
@@ -72,9 +66,6 @@ class TodaySection(BaseModel):
     freshness: Freshness = Freshness.fresh
 
 
-# ── Media ──────────────────────────────────────────────────────────────
-
-
 class PlayState(str, Enum):
     idle = "idle"
     playing = "playing"
@@ -91,7 +82,7 @@ class Track(BaseModel):
 
 
 class MediaSection(BaseModel):
-    """Host media mirror. Real mpv/ytdl/cassette stay on Debian."""
+    """Hosted media *mirror*. Real mpv/ytdl/cassette stay on Debian when verified."""
 
     state: PlayState = PlayState.idle
     current: Track | None = None
@@ -108,10 +99,7 @@ class MediaSection(BaseModel):
     cassette_repo: str = "AARomanov1985/Audio-Cassette-Simulation"
     path_label: str = "ytdl → mpv → ffmpeg cassette → out"
     freshness: Freshness = Freshness.unknown
-    note: str | None = None
-
-
-# ── Learning ───────────────────────────────────────────────────────────
+    note: str | None = "hosted mirror only — not a verified Debian mpv session"
 
 
 class LearningItem(BaseModel):
@@ -132,9 +120,6 @@ class LearningSection(BaseModel):
     topics_label: str = "allergen-matrix + service-rescue + line-opening"
     advance_ms: int = 20_000
     freshness: Freshness = Freshness.fresh
-
-
-# ── Briefing ───────────────────────────────────────────────────────────
 
 
 class BriefingItem(BaseModel):
@@ -168,9 +153,6 @@ class BriefingSection(BaseModel):
     freshness: Freshness = Freshness.fresh
 
 
-# ── Machine ────────────────────────────────────────────────────────────
-
-
 class MachineSection(BaseModel):
     host: str = "debian-minimal"
     disk_pct: float = Field(default=0, ge=0, le=100)
@@ -191,9 +173,6 @@ class MachineSection(BaseModel):
             or self.apt_updates > 50
         )
         return self.model_copy(update={"warn": unhealthy})
-
-
-# ── Board ──────────────────────────────────────────────────────────────
 
 
 class BoardStatus(BaseModel):
@@ -219,9 +198,6 @@ class Board(BaseModel):
     machine: MachineSection
 
 
-# ── API envelopes ──────────────────────────────────────────────────────
-
-
 class HealthResponse(BaseModel):
     ok: bool = True
     service: str = "casual-board"
@@ -231,14 +207,9 @@ class HealthResponse(BaseModel):
     auth_mode: Literal["token", "open-dev"] = "open-dev"
     pydantic: str
     pydantic_ai_available: bool = True
+    ai_provider: str = "none"
     data_dir: str = ""
     time: datetime
-
-
-class ErrorBody(BaseModel):
-    detail: str
-    code: str = "error"
-    fields: dict[str, Any] | None = None
 
 
 class CaptureRequest(BaseModel):
@@ -260,6 +231,7 @@ class CaptureResponse(BaseModel):
     item: TodayItem
     board: Board
     used_ai: bool = False
+    ai_provider: str = "none"
 
 
 class CommandName(str, Enum):
@@ -278,7 +250,7 @@ class CommandName(str, Enum):
     media_volume = "media_volume"
 
 
-# Tight allowlist for debian-bridge / Hermes (subset)
+# Bridge may only pull these
 BRIDGE_ALLOWLIST: frozenset[str] = frozenset(
     {
         CommandName.status.value,
@@ -290,11 +262,36 @@ BRIDGE_ALLOWLIST: frozenset[str] = frozenset(
     }
 )
 
+# Host-facing → must be queued for Debian bridge (never executed on approve in API)
+HOST_FACING_COMMANDS: frozenset[str] = frozenset(
+    {
+        CommandName.set_machine.value,
+        CommandName.set_media.value,
+        CommandName.remove_today.value,
+    }
+)
+
 SYSTEM_CHANGING: frozenset[str] = frozenset(
     {
         CommandName.set_machine.value,
         CommandName.set_media.value,
         CommandName.remove_today.value,
+    }
+)
+
+# Server-side board mirror (no Debian required)
+SERVER_SIDE_COMMANDS: frozenset[str] = frozenset(
+    {
+        CommandName.status.value,
+        CommandName.capture.value,
+        CommandName.add_today.value,
+        CommandName.media_play.value,
+        CommandName.media_pause.value,
+        CommandName.media_next.value,
+        CommandName.media_stop.value,
+        CommandName.media_cassette_on.value,
+        CommandName.media_cassette_off.value,
+        CommandName.media_volume.value,
     }
 )
 
@@ -304,13 +301,17 @@ class CommandRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     source: ItemSource = ItemSource.web
     actor: str = "anonymous"
-    require_approval: bool = False
+    require_approval: bool | None = None
     client_id: str | None = None
+    # force host queue even for server-side cmds
+    route: Literal["auto", "server", "bridge"] = "auto"
 
 
 class ActionStatus(str, Enum):
     accepted = "accepted"
     pending_approval = "pending_approval"
+    queued = "queued"
+    leased = "leased"
     running = "running"
     completed = "completed"
     rejected = "rejected"
@@ -330,11 +331,13 @@ class ActionRecord(BaseModel):
     updated_at: datetime
     board_revision: int | None = None
     audit: dict[str, Any] = Field(default_factory=dict)
+    job_id: str | None = None
 
 
 class CommandResponse(BaseModel):
     action: ActionRecord
     board: Board | None = None
+    job: "BridgeJob | None" = None
 
 
 class ApprovalRequest(BaseModel):
@@ -342,18 +345,63 @@ class ApprovalRequest(BaseModel):
     note: str = ""
 
 
+# ── Bridge job queue ───────────────────────────────────────────────────
+
+
+class BridgeJobStatus(str, Enum):
+    pending_approval = "pending_approval"
+    queued = "queued"
+    leased = "leased"
+    completed = "completed"
+    rejected = "rejected"
+    failed = "failed"
+
+
+class BridgeJob(BaseModel):
+    id: str
+    command: CommandName
+    status: BridgeJobStatus
+    payload: dict[str, Any] = Field(default_factory=dict)
+    actor: str = "system"
+    source: ItemSource = ItemSource.web
+    client_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    message: str = ""
+    result: dict[str, Any] | None = None
+    leased_by: str | None = None
+    lease_expires_at: datetime | None = None
+    board_revision: int | None = None
+    audit: dict[str, Any] = Field(default_factory=dict)
+
+
+class BridgeJobLeaseResponse(BaseModel):
+    job: BridgeJob | None = None
+    wait_ms: int = 0
+
+
+class BridgeJobResultRequest(BaseModel):
+    job_id: str
+    status: str  # completed | failed
+    result: dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+    worker_id: str = "debian-bridge"
+    signature: str = ""
+    executor_note: str = "stub — Hermes/mpv not claimed verified"
+    board_patch: dict[str, Any] | None = None
+
+
 class StreamEvent(BaseModel):
-    type: Literal["snapshot", "revision", "action", "ping", "error"]
+    type: Literal["snapshot", "revision", "action", "job", "ping", "error"]
     revision: int | None = None
     at: datetime
     board: Board | None = None
     action: ActionRecord | None = None
+    job: BridgeJob | None = None
     detail: str | None = None
 
 
 class ChatMessageRequest(BaseModel):
-    """Linux-Wiki / Hermes chat panel — NOT unrestricted shell."""
-
     message: str = Field(min_length=1, max_length=2000)
     channel: Literal["hermes", "linux-wiki", "ops"] = "hermes"
     source: ItemSource = ItemSource.web
@@ -364,4 +412,8 @@ class ChatMessageResponse(BaseModel):
     reply: str
     suggested_commands: list[CommandName] = Field(default_factory=list)
     action: ActionRecord | None = None
+    job: BridgeJob | None = None
     board: Board | None = None
+
+
+CommandResponse.model_rebuild()

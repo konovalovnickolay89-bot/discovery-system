@@ -55,7 +55,7 @@ export function CasualBoard() {
         setHealth(null);
         setFailure(b.meta.revision > 0 ? "offline-cache" : "unreachable");
         setFailureDetail(
-          "GET /health failed. Is the FastAPI process running and is VITE_API_BASE_URL correct?",
+          "GET /health failed. Is FastAPI running and is VITE_API_BASE_URL correct?",
         );
         setConnection("api unreachable");
         if (b.meta.revision > 0) {
@@ -95,12 +95,7 @@ export function CasualBoard() {
       if (res.board) setBoard(res.board);
       return res.action.message;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "command failed";
-      if (/401|403|Unauthorized|token/i.test(msg)) {
-        setFailure("auth");
-        setFailureDetail(msg);
-      }
-      return msg;
+      return e instanceof Error ? e.message : "command failed";
     }
   }
 
@@ -115,7 +110,7 @@ export function CasualBoard() {
           Casual Board
         </h1>
         <span className="font-mono text-xs text-faint">
-          discovery-system · debian outbound
+          discovery-system · public UI · debian bridge outbound
         </span>
       </div>
 

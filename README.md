@@ -95,7 +95,6 @@ VITE_API_BASE_URL=http://api…         # mixed content blocked on https grok.me
 Optional browser token (prefer avoiding long-lived secrets in the client):
 
 ```bash
-VITE_API_TOKEN=same-as-CASUAL_BOARD_TOKEN
 ```
 
 ---
@@ -217,7 +216,7 @@ cd ../debian-client && pip install -r requirements.txt && PYTHONPATH=. pytest -q
 - [ ] API only via HTTPS/WSS (Tunnel or reverse proxy)  
 - [ ] Debian: no raw public `:8090`; tunnel to loopback  
 - [ ] Chat / bridge never unrestricted shell  
-- [ ] Prefer not embedding long-lived owner token in the published JS  
+- [ ] Never put owner/bridge tokens in VITE_* or browser JS  
 
 **Not fully production-live** until API host + tunnel + token + rebuild of the
 web app with `VITE_API_BASE_URL` are verified end-to-end.

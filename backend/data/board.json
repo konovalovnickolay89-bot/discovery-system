@@ -1,8 +1,8 @@
 {
   "meta": {
-    "revision": 2,
+    "revision": 3,
     "generated_at": "2026-07-29T23:40:13.622638Z",
-    "updated_at": "2026-07-29T23:40:15.443324Z",
+    "updated_at": "2026-07-30T00:48:25.959459Z",
     "host_label": "casual-board",
     "status": {
       "label": "worth a look — 1 warnings",
@@ -98,6 +98,21 @@
         "recipe": null,
         "expires_at": null,
         "created_at": "2026-07-29T23:40:15.443217Z"
+      },
+      {
+        "id": "t-874c01e909",
+        "text": "Review fix capture — review fix capture",
+        "level": "info",
+        "tags": [
+          "capture"
+        ],
+        "url": null,
+        "detail": "review fix capture",
+        "kind": "capture",
+        "source": "capture",
+        "recipe": null,
+        "expires_at": null,
+        "created_at": "2026-07-30T00:48:25.959351Z"
       }
     ],
     "empty_footer": "routine.json is empty — add your day's shape",

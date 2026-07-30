@@ -19,8 +19,8 @@ One **FastAPI** process is the source of truth. Phone web, your raw CLI, and the
 
 ```bash
 sudo mkdir -p /opt/casual-board /var/lib/casual-board
-# copy the `python/` tree → /opt/casual-board/python
-cd /opt/casual-board/python
+# copy the `backend/` tree → /opt/casual-board/backend
+cd /opt/casual-board/backend
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -44,7 +44,7 @@ curl -s http://127.0.0.1:8090/api/health
 export CASUAL_BOARD_URL=http://127.0.0.1:8090
 export CASUAL_BOARD_TOKEN=...   # same as service
 
-cd /opt/casual-board/python
+cd /opt/casual-board/backend
 . .venv/bin/activate
 python -m app status
 python -m app dash
@@ -58,10 +58,10 @@ python -m app hermes status
 Optional symlink:
 
 ```bash
-sudo ln -sf /opt/casual-board/python/.venv/bin/python /usr/local/bin/casual-board-py
+sudo ln -sf /opt/casual-board/backend/.venv/bin/python /usr/local/bin/casual-board-api-py
 # wrapper:
 echo '#!/bin/sh
-cd /opt/casual-board/python && . .venv/bin/activate && exec python -m app "$@"' | sudo tee /usr/local/bin/cb
+cd /opt/casual-board/backend && . .venv/bin/activate && exec python -m app "$@"' | sudo tee /usr/local/bin/cb
 sudo chmod +x /usr/local/bin/cb
 cb dash
 ```

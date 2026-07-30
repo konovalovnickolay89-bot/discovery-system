@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, wsUrl } from "./api-config";
+import { apiUrl, publicHeaders, wsUrl } from "./api-config";
 import type {
   Board,
   CaptureResponse,
@@ -11,7 +11,7 @@ import { FALLBACK_BOARD } from "./board-fallback";
 async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
+    headers: { ...publicHeaders(), ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -73,12 +73,11 @@ export function connectBoardSocket(opts: {
   let closed = false;
   let retry = 0;
   let timer: number | undefined;
-  const token = (import.meta.env.VITE_API_TOKEN as string | undefined)?.trim();
 
   const connect = () => {
     if (closed) return;
     try {
-      ws = new WebSocket(wsUrl("/v1/board/ws", token));
+      ws = new WebSocket(wsUrl("/v1/board/ws"));
     } catch {
       opts.onStatus?.("offline");
       schedule();

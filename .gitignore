@@ -1,5 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/data/
+*.jsonl
+
+# Node
 node_modules/
-.project_id
-.github_repo
+.tanstack/
+dist/
+.vercel/output/
+
+# Env / secrets — never commit
 .env
-.env.*
+.env.local
+.env.production
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Legacy duplicate (removed)
+# python/ was archived/deleted — do not reintroduce

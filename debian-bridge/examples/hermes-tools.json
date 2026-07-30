@@ -1,16 +1,18 @@
 {
   "name": "casual-board-bridge",
-  "description": "Linux-Wiki / Hermes administration profile for Casual Board (outbound only)",
+  "description": "Outbound Debian bridge for Casual Board — long-poll jobs, signed results. Hermes/mpv not claimed verified.",
   "base_url_env": "CASUAL_BOARD_API_URL",
   "auth": {
     "header": "Authorization",
     "scheme": "Bearer",
-    "token_env": "CASUAL_BOARD_TOKEN"
+    "token_env": "CASUAL_BOARD_BRIDGE_TOKEN"
   },
   "notes": [
-    "Debian never accepts public inbound connections for this bridge.",
-    "System-changing actions (set_machine, set_media, remove_today) set require_approval=true.",
-    "No unrestricted shell — only allowlisted commands."
+    "No public inbound port on Debian.",
+    "Host-facing work is leased from GET /v1/bridge/jobs/lease.",
+    "Results must be HMAC-signed with CASUAL_BOARD_BRIDGE_TOKEN.",
+    "Approvals use CASUAL_BOARD_TOKEN on the owner/admin side only — never in the browser.",
+    "Stub executor only until a real Hermes/mpv path is verified on Debian."
   ],
   "allowlist": [
     "status",
@@ -22,74 +24,30 @@
   ],
   "tools": [
     {
-      "name": "board_status",
+      "name": "bridge_lease_job",
+      "method": "GET",
+      "path": "/v1/bridge/jobs/lease",
+      "query": { "worker_id": "hermes", "timeout_s": 25 }
+    },
+    {
+      "name": "bridge_post_result",
       "method": "POST",
-      "path": "/v1/commands",
+      "path": "/v1/bridge/jobs/result",
       "body": {
-        "command": "status",
-        "source": "bridge",
-        "actor": "hermes",
-        "payload": {}
+        "job_id": "{{job_id}}",
+        "status": "{{status}}",
+        "result": {},
+        "signature": "{{hmac}}",
+        "worker_id": "hermes",
+        "executor_note": "stub — Hermes/mpv not claimed verified"
       }
     },
     {
-      "name": "board_capture",
+      "name": "owner_approve_job",
       "method": "POST",
-      "path": "/v1/commands",
-      "body": {
-        "command": "capture",
-        "source": "bridge",
-        "actor": "hermes",
-        "payload": { "note": "{{note}}" }
-      }
-    },
-    {
-      "name": "board_add_today",
-      "method": "POST",
-      "path": "/v1/commands",
-      "body": {
-        "command": "add_today",
-        "source": "bridge",
-        "actor": "hermes",
-        "payload": { "text": "{{text}}", "kind": "reminder" }
-      }
-    },
-    {
-      "name": "board_remove_today",
-      "method": "POST",
-      "path": "/v1/commands",
-      "body": {
-        "command": "remove_today",
-        "source": "bridge",
-        "actor": "hermes",
-        "require_approval": true,
-        "payload": { "id": "{{id}}" }
-      }
-    },
-    {
-      "name": "board_set_machine",
-      "method": "POST",
-      "path": "/v1/commands",
-      "body": {
-        "command": "set_machine",
-        "source": "bridge",
-        "actor": "hermes",
-        "require_approval": true,
-        "payload": {
-          "disk_pct": "{{disk_pct}}",
-          "free_gib": "{{free_gib}}",
-          "failed_units": "{{failed_units}}",
-          "net": "{{net}}",
-          "apt_updates": "{{apt_updates}}",
-          "host": "{{host}}"
-        }
-      }
-    },
-    {
-      "name": "board_approve_action",
-      "method": "POST",
-      "path": "/v1/actions/{{action_id}}/approval",
-      "body": { "approve": true, "note": "hermes approved" }
+      "path": "/v1/actions/{{job_id}}/approval",
+      "auth_env": "CASUAL_BOARD_TOKEN",
+      "body": { "approve": true, "note": "owner approved" }
     }
   ]
 }

@@ -1,18 +1,21 @@
-"""Outbound-only bridge.
+"""Outbound-only Debian bridge worker.
 
-Polls / maintains connection *out* to the hosted API. Never opens a listen port.
-Allowlisted commands only; system-changing actions require explicit approval
-on the hosted side (require_approval=true).
+Long-polls the hosted API for leased jobs, runs a local executor hook
+(Hermes/Linux-Wiki placeholder — not claimed verified), posts signed results.
+
+Never opens a public inbound port.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import sys
 import time
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -27,14 +30,26 @@ ALLOWLIST = frozenset(
     }
 )
 
-SYSTEM_CHANGING = frozenset({"set_machine", "set_media", "remove_today"})
+
+def sign_result(secret: str, job_id: str, status: str, body: dict[str, Any]) -> str:
+    if not secret:
+        return "open-dev"
+    raw = f"{job_id}|{status}|{json.dumps(body, sort_keys=True, default=str)}"
+    return hmac.new(secret.encode("utf-8"), raw.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-class BridgeClient:
-    def __init__(self, base_url: str, token: str, auto_approve_safe: bool = True) -> None:
+class BridgeWorker:
+    def __init__(
+        self,
+        base_url: str,
+        token: str,
+        worker_id: str = "debian-bridge",
+        executor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self.auto_approve_safe = auto_approve_safe
+        self.worker_id = worker_id
+        self.executor = executor or stub_executor
 
     def _headers(self) -> dict[str, str]:
         h = {"content-type": "application/json", "accept": "application/json"}
@@ -42,116 +57,194 @@ class BridgeClient:
             h["authorization"] = f"Bearer {self.token}"
         return h
 
-    def run_command(
-        self,
-        command: str,
-        payload: dict[str, Any] | None = None,
-        *,
-        actor: str = "hermes",
-        force_approval: bool | None = None,
-    ) -> dict[str, Any]:
-        if command not in ALLOWLIST:
-            raise SystemExit(f"command not allowlisted: {command}")
-        require = (
-            force_approval
-            if force_approval is not None
-            else (command in SYSTEM_CHANGING)
-        )
-        body = {
-            "command": command,
-            "payload": payload or {},
-            "source": "bridge",
-            "actor": actor,
-            "require_approval": require,
-            "client_id": "debian-bridge",
-        }
-        with httpx.Client(timeout=30.0) as c:
-            r = c.post(f"{self.base_url}/v1/commands", headers=self._headers(), json=body)
-            r.raise_for_status()
-            return r.json()
-
-    def approve(self, action_id: str, approve: bool = True, note: str = "") -> dict[str, Any]:
-        with httpx.Client(timeout=30.0) as c:
-            r = c.post(
-                f"{self.base_url}/v1/actions/{action_id}/approval",
-                headers=self._headers(),
-                json={"approve": approve, "note": note},
-            )
-            r.raise_for_status()
-            return r.json()
-
     def heartbeat(self) -> dict[str, Any]:
         with httpx.Client(timeout=15.0) as c:
             r = c.get(f"{self.base_url}/health", headers=self._headers())
             r.raise_for_status()
             return r.json()
 
+    def lease(self, timeout_s: float = 25.0) -> dict[str, Any] | None:
+        with httpx.Client(timeout=timeout_s + 10.0) as c:
+            r = c.get(
+                f"{self.base_url}/v1/bridge/jobs/lease",
+                headers=self._headers(),
+                params={"worker_id": self.worker_id, "timeout_s": timeout_s},
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data.get("job")
+
+    def post_result(
+        self,
+        job_id: str,
+        status: str,
+        result: dict[str, Any],
+        message: str = "",
+        board_patch: dict[str, Any] | None = None,
+        executor_note: str = "stub — Hermes/mpv not claimed verified",
+    ) -> dict[str, Any]:
+        sig = sign_result(self.token, job_id, status, result)
+        body = {
+            "job_id": job_id,
+            "status": status,
+            "result": result,
+            "message": message,
+            "worker_id": self.worker_id,
+            "signature": sig,
+            "executor_note": executor_note,
+            "board_patch": board_patch,
+        }
+        with httpx.Client(timeout=30.0) as c:
+            r = c.post(
+                f"{self.base_url}/v1/bridge/jobs/result",
+                headers=self._headers(),
+                json=body,
+            )
+            r.raise_for_status()
+            return r.json()
+
+    def process_one(self, timeout_s: float = 25.0) -> dict[str, Any] | None:
+        job = self.lease(timeout_s=timeout_s)
+        if not job:
+            return None
+        cmd = job.get("command")
+        if cmd not in ALLOWLIST:
+            return self.post_result(
+                job["id"],
+                "failed",
+                {"error": "not allowlisted"},
+                message=f"reject {cmd}",
+            )
+        try:
+            out = self.executor(job)
+            status = "completed" if out.get("ok", True) else "failed"
+            return self.post_result(
+                job["id"],
+                status,
+                out.get("result") or {},
+                message=out.get("message") or status,
+                board_patch=out.get("board_patch"),
+                executor_note=out.get(
+                    "executor_note",
+                    "stub — Hermes/mpv not claimed verified",
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            return self.post_result(
+                job["id"],
+                "failed",
+                {"error": str(e)},
+                message=str(e),
+            )
+
+    def run_loop(self, interval: float = 0.5) -> None:
+        print(f"bridge worker {self.worker_id} → {self.base_url}", flush=True)
+        while True:
+            try:
+                res = self.process_one(timeout_s=25.0)
+                if res:
+                    print(json.dumps({"job": res.get("id"), "status": res.get("status")}), flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"bridge error: {e}", file=sys.stderr, flush=True)
+                time.sleep(interval)
+
+
+def stub_executor(job: dict[str, Any]) -> dict[str, Any]:
+    """Local hook placeholder.
+
+    Wire Linux-Wiki / Hermes here later. Does NOT claim real mpv/Hermes execution.
+    For set_machine, returns a synthetic board_patch from payload only.
+    """
+    cmd = job.get("command")
+    payload = job.get("payload") or {}
+    if cmd == "set_machine":
+        patch = {
+            "machine": {
+                **payload,
+                "freshness": "fresh",
+            }
+        }
+        return {
+            "ok": True,
+            "message": "stub applied machine patch from payload (not live /proc)",
+            "result": {"command": cmd, "stub": True},
+            "board_patch": patch,
+            "executor_note": "stub — Hermes/mpv not claimed verified",
+        }
+    if cmd == "set_media":
+        return {
+            "ok": True,
+            "message": "stub media patch",
+            "result": {"command": cmd, "stub": True},
+            "board_patch": {"media": payload},
+            "executor_note": "stub — Hermes/mpv not claimed verified",
+        }
+    if cmd == "remove_today":
+        return {
+            "ok": True,
+            "message": f"stub remove {payload.get('id')}",
+            "result": {"command": cmd, "stub": True},
+            "board_patch": {"remove_today_id": payload.get("id")},
+            "executor_note": "stub — Hermes/mpv not claimed verified",
+        }
+    return {
+        "ok": True,
+        "message": f"stub handled {cmd}",
+        "result": {"command": cmd, "stub": True, "payload": payload},
+        "executor_note": "stub — Hermes/mpv not claimed verified",
+    }
+
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description="Casual Board outbound bridge")
+    p = argparse.ArgumentParser(description="Casual Board outbound bridge worker")
     p.add_argument("--url", default=os.environ.get("CASUAL_BOARD_API_URL", "http://127.0.0.1:8090"))
-    p.add_argument("--token", default=os.environ.get("CASUAL_BOARD_TOKEN", ""))
+    p.add_argument(
+        "--token",
+        default=os.environ.get("CASUAL_BOARD_BRIDGE_TOKEN")
+        or os.environ.get("CASUAL_BOARD_TOKEN", ""),
+    )
+    p.add_argument("--worker-id", default=os.environ.get("CASUAL_BOARD_WORKER_ID", "debian-bridge"))
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor")
     sub.add_parser("heartbeat")
-    r = sub.add_parser("run")
-    r.add_argument("command", choices=sorted(ALLOWLIST))
-    r.add_argument("--payload", default="{}", help="JSON payload")
-    r.add_argument("--approve", action="store_true", help="auto-approve if pending")
-    r.add_argument("--actor", default="hermes")
-
-    poll = sub.add_parser("poll-machine")
-    poll.add_argument("--interval", type=float, default=60.0)
-    poll.add_argument("--disk", type=float, default=None)
-    poll.add_argument("--approve", action="store_true")
+    sub.add_parser("once")
+    sub.add_parser("run")
 
     args = p.parse_args(argv)
-    client = BridgeClient(args.url, args.token)
+    worker = BridgeWorker(args.url, args.token, worker_id=args.worker_id)
 
     if args.cmd == "doctor":
-        print(json.dumps({"url": args.url, "token_set": bool(args.token), "allowlist": sorted(ALLOWLIST)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "url": args.url,
+                    "token_set": bool(args.token),
+                    "worker_id": args.worker_id,
+                    "allowlist": sorted(ALLOWLIST),
+                    "note": "Hermes/mpv integration not claimed verified",
+                },
+                indent=2,
+            )
+        )
         try:
-            print(json.dumps(client.heartbeat(), indent=2))
+            print(json.dumps(worker.heartbeat(), indent=2))
         except Exception as e:
             print(f"heartbeat failed: {e}", file=sys.stderr)
             sys.exit(2)
         return
 
     if args.cmd == "heartbeat":
-        print(json.dumps(client.heartbeat(), indent=2))
+        print(json.dumps(worker.heartbeat(), indent=2))
+        return
+
+    if args.cmd == "once":
+        res = worker.process_one(timeout_s=5.0)
+        print(json.dumps(res, indent=2))
         return
 
     if args.cmd == "run":
-        payload = json.loads(args.payload)
-        res = client.run_command(args.command, payload, actor=args.actor)
-        print(json.dumps(res, indent=2))
-        action = res.get("action") or {}
-        if action.get("status") == "pending_approval" and args.approve:
-            res2 = client.approve(action["id"], True, note="bridge --approve")
-            print(json.dumps(res2, indent=2))
-        return
-
-    if args.cmd == "poll-machine":
-        # Example outbound reporter — replace with real /proc reads on Debian
-        while True:
-            payload = {
-                "disk_pct": args.disk if args.disk is not None else 42.0,
-                "free_gib": 100.0,
-                "failed_units": 0,
-                "net": "wired",
-                "apt_updates": 0,
-                "host": "debian-minimal",
-            }
-            try:
-                res = client.run_command("set_machine", payload, actor="machine-poller")
-                print(json.dumps({"ts": time.time(), "status": res.get("action", {}).get("status")}, indent=2))
-                action = res.get("action") or {}
-                if action.get("status") == "pending_approval" and args.approve:
-                    client.approve(action["id"], True, note="poll-machine")
-            except Exception as e:
-                print(f"error: {e}", file=sys.stderr)
-            time.sleep(args.interval)
+        worker.run_loop()
 
 
 if __name__ == "__main__":

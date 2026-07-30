@@ -124,19 +124,12 @@ Rebuild / republish the web app with:
 ```bash
 # build-time (Vite embeds this)
 VITE_API_BASE_URL=https://api.your-domain.tld
-# optional if API uses bearer tokens from the browser (prefer short-lived later)
-# VITE_API_TOKEN=same-as-CASUAL_BOARD_TOKEN   # only if you accept that risk
 ```
 
-**Security note:** putting the owner token in the browser exposes it to anyone
-who can open the published app. Prefer:
-
-- open board **read** later with a separate public token, or
-- keep mutations behind Debian CLI / Hermes only, or
-- put the UI behind auth you control.
-
-For a single-owner personal board, a long random token + CORS locked to
-`https://discovery-system.grok.me` is an acceptable v1.
+**Security:** the published web UI never receives `CASUAL_BOARD_TOKEN` or
+`CASUAL_BOARD_BRIDGE_TOKEN`. Board reads/writes that are server-side are public
+but CORS-locked to `https://discovery-system.grok.me`. Owner token is for
+approvals/admin only; bridge token is for the Debian worker.
 
 ## 4. Debian CLI / bridge (outbound)
 
