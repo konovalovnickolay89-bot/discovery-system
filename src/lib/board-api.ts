@@ -119,6 +119,44 @@ export async function postStartFresh(confirmation: string): Promise<StartFreshRe
   });
 }
 
+
+export type EvolvingCookPlan = {
+  decision: { verdict: string; title: string; summary: string };
+  do_this_next: string;
+  routes: {
+    id: string;
+    title: string;
+    summary: string;
+    steps: string[];
+    guest_service: boolean;
+    notes?: string[];
+  }[];
+  sort_tray: {
+    use_now: string[];
+    prep_later: string[];
+    store: string[];
+    stop_or_escalate: string[];
+  };
+  sensory_checks: string[];
+  allergen_prompts: string[];
+  guest_service_allowed: boolean;
+  notes?: string[];
+  available_items?: string[];
+};
+
+export async function postEvolvingCook(body: {
+  available: string;
+  traceability: string;
+  where_for: string;
+  allergens?: string;
+  desired_outcome?: string;
+}): Promise<EvolvingCookPlan> {
+  return getJson<EvolvingCookPlan>(apiUrl("/v1/evolving-cook"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function connectBoardSocket(opts: {
   onBoard: (b: Board) => void;
   onStatus?: (s: string) => void;

@@ -38,11 +38,14 @@ from .models import (
     ItemSource,
     LoginRequest,
     SessionResponse,
+    EvolvingCookPlan,
+    EvolvingCookRequest,
     StartFreshRequest,
     StartFreshResponse,
     StreamEvent,
     TodayItem,
 )
+from .evolving_cook import plan_evolving_cook
 from .sessions import login_with_password, require_session, verify_session
 from .store import get_store
 
@@ -200,6 +203,13 @@ def create_capture(body: CaptureRequest, _s: dict = Depends(require_session)) ->
         detail="capture",
     )
     return CaptureResponse(draft=draft, item=item, board=board, used_ai=used, ai_provider=provider)
+
+
+
+@app.post("/v1/evolving-cook", response_model=EvolvingCookPlan, tags=["board"])
+def evolving_cook(body: EvolvingCookRequest, _s: dict = Depends(require_session)) -> EvolvingCookPlan:
+    """Session-only surplus/trim planner. Deterministic safety rules — no live LLM."""
+    return plan_evolving_cook(body)
 
 
 @app.post("/v1/commands", response_model=CommandResponse, tags=["commands"])

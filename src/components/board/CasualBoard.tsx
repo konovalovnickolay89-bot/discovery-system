@@ -14,6 +14,7 @@ import { validateApiConfig } from "@/lib/api-config";
 import { HeaderBar } from "./HeaderBar";
 import { TodayCard } from "./TodayCard";
 import { MediaCard } from "./MediaCard";
+import { EvolvingCookCard } from "./EvolvingCookCard";
 import { LearningCard } from "./LearningCard";
 import { BriefingCard } from "./BriefingCard";
 import { MachineCard } from "./MachineCard";
@@ -170,6 +171,13 @@ export function CasualBoard() {
           </div>
         </div>
         <div className="board-col board-col-right flex flex-col gap-3.5">
+          <EvolvingCookCard
+            onBoard={setBoard}
+            onAuthLost={() => {
+              setAuthed(false);
+              setAuthNote("Session expired — sign in again.");
+            }}
+          />
           <LearningCard board={board} />
           <BriefingCard briefing={board.briefing} />
           <ChatPanel board={board} onBoard={setBoard} />

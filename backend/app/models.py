@@ -229,6 +229,67 @@ class StartFreshResponse(BaseModel):
     message: str = "board cleared"
 
 
+
+
+class EvolvingCookTraceability(str, Enum):
+    labelled_chilled_known = "labelled_chilled_known"
+    clean_raw_trim = "clean_raw_trim"
+    unknown = "unknown"
+    guest_exposed_buffet = "guest_exposed_buffet"
+
+
+class EvolvingCookWhere(str, Enum):
+    canteen = "canteen"
+    staff_meal = "staff_meal"
+    breakfast = "breakfast"
+    banqueting = "banqueting"
+    a_la_carte = "a_la_carte"
+    home = "home"
+    undecided = "undecided"
+
+
+class EvolvingCookRequest(BaseModel):
+    available: str = Field(min_length=0, max_length=4000, description="Ingredients or trim")
+    traceability: EvolvingCookTraceability
+    where_for: EvolvingCookWhere = EvolvingCookWhere.undecided
+    allergens: str = Field(default="", max_length=1000)
+    desired_outcome: str = Field(default="", max_length=500)
+
+
+class CookDecision(BaseModel):
+    verdict: Literal["proceed", "caution", "discard_or_escalate"]
+    title: str
+    summary: str
+
+
+class CookRoute(BaseModel):
+    id: Literal["classic", "new", "experiment"]
+    title: str
+    summary: str
+    steps: list[str] = Field(default_factory=list)
+    guest_service: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
+class SortTray(BaseModel):
+    use_now: list[str] = Field(default_factory=list)
+    prep_later: list[str] = Field(default_factory=list)
+    store: list[str] = Field(default_factory=list)
+    stop_or_escalate: list[str] = Field(default_factory=list)
+
+
+class EvolvingCookPlan(BaseModel):
+    decision: CookDecision
+    do_this_next: str
+    routes: list[CookRoute] = Field(default_factory=list)
+    sort_tray: SortTray = Field(default_factory=SortTray)
+    sensory_checks: list[str] = Field(default_factory=list)
+    allergen_prompts: list[str] = Field(default_factory=list)
+    guest_service_allowed: bool = False
+    notes: list[str] = Field(default_factory=list)
+    available_items: list[str] = Field(default_factory=list)
+
+
 class CaptureRequest(BaseModel):
 
     note: str = Field(min_length=1, max_length=2000)

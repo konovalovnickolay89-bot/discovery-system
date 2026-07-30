@@ -367,3 +367,101 @@ def test_seed_reset_blocked_or_dev_only(client: TestClient):
     finally:
         os.environ["CASUAL_BOARD_ENV"] = "development"
         get_settings.cache_clear()
+
+
+def test_evolving_cook_requires_session(client: TestClient):
+    r = client.post(
+        "/v1/evolving-cook",
+        json={
+            "available": "onion",
+            "traceability": "labelled_chilled_known",
+            "where_for": "staff_meal",
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_evolving_cook_guest_exposed_discard(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/evolving-cook",
+        headers=h,
+        json={
+            "available": "roast potatoes, gravy",
+            "traceability": "guest_exposed_buffet",
+            "where_for": "a_la_carte",
+            "allergens": "gluten, milk",
+            "desired_outcome": "special",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["decision"]["verdict"] == "discard_or_escalate"
+    assert body["guest_service_allowed"] is False
+    assert any("guest" in n.lower() or "never" in n.lower() for n in body.get("notes", []))
+    assert body["allergen_prompts"]
+    for route in body["routes"]:
+        assert route["guest_service"] is False
+
+
+def test_evolving_cook_unknown_high_risk_discard(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/evolving-cook",
+        headers=h,
+        json={
+            "available": "chicken trim, cooked rice",
+            "traceability": "unknown",
+            "where_for": "banqueting",
+            "allergens": "",
+            "desired_outcome": "staff pie",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["decision"]["verdict"] == "discard_or_escalate"
+    assert r.json()["guest_service_allowed"] is False
+
+
+def test_evolving_cook_safe_labelled_routes(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/evolving-cook",
+        headers=h,
+        json={
+            "available": "onion ends, carrot peel, herb stalks",
+            "traceability": "labelled_chilled_known",
+            "where_for": "staff_meal",
+            "allergens": "celery",
+            "desired_outcome": "clear soup",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["decision"]["verdict"] == "proceed"
+    assert len(body["routes"]) == 3
+    titles = {x["title"] for x in body["routes"]}
+    assert "Classic route" in titles
+    assert "New direction" in titles
+    assert "Small experiment" in titles
+    assert body["do_this_next"]
+    assert body["sort_tray"]
+    assert any("celery" in p.lower() for p in body["allergen_prompts"])
+
+
+def test_evolving_cook_allergen_prompts(client: TestClient):
+    h = session(client)
+    r = client.post(
+        "/v1/evolving-cook",
+        headers=h,
+        json={
+            "available": "bread trim",
+            "traceability": "labelled_chilled_known",
+            "where_for": "breakfast",
+            "allergens": "gluten, sesame",
+            "desired_outcome": "croutons",
+        },
+    )
+    assert r.status_code == 200
+    prompts = " ".join(r.json()["allergen_prompts"]).lower()
+    assert "gluten" in prompts
+    assert "sesame" in prompts
