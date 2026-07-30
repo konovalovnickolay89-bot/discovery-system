@@ -73,6 +73,11 @@ Ensure `/etc/casual-board.env` includes (do not print tokens):
 * `CASUAL_BOARD_GRAPH_RECALL_TOKEN`
 * `CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S=300`
 * `CASUAL_BOARD_EVIDENCE_AI_PROVIDER=none` (default — no second model keys required)
+* Optional Mistral reviewer is **API-only** (`/etc/casual-board.env`):  
+  `CASUAL_BOARD_EVIDENCE_AI_PROVIDER=mistral`,  
+  `CASUAL_BOARD_EVIDENCE_AI_MODEL=mistral:mistral-small-latest`,  
+  `MISTRAL_API_KEY=...`  
+  Never put `MISTRAL_API_KEY` in this worker env file.
 
 ```bash
 sudo systemctl restart casual-board-api

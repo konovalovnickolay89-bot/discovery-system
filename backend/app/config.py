@@ -67,7 +67,8 @@ class Settings(BaseSettings):
         default="/home/discovery-system/Logseq/graph",
         alias="CASUAL_BOARD_LOGSEQ_GRAPH_ROOT",
     )
-    # Optional evidence reviewer (server-side only; default none = no second model)
+    # Optional evidence reviewer (API process only; default none). Providers: none|function|mistral|openai|xai
+    # Mistral uses MISTRAL_API_KEY from systemd EnvironmentFile — never VITE_*/worker env
     evidence_ai_provider: str = Field(default="none", alias="CASUAL_BOARD_EVIDENCE_AI_PROVIDER")
     evidence_ai_model: str = Field(default="", alias="CASUAL_BOARD_EVIDENCE_AI_MODEL")
     strict_env: bool = Field(default=False, alias="CASUAL_BOARD_STRICT_ENV")

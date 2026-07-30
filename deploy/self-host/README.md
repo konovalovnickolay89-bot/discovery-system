@@ -14,6 +14,7 @@ CASUAL_BOARD_PORT=8090
 CASUAL_BOARD_DATA_DIR=/var/lib/casual-board
 CASUAL_BOARD_TOKEN=<owner/admin secret — approvals only>
 CASUAL_BOARD_BRIDGE_TOKEN=<distinct bridge secret — long-poll + HMAC>
+CASUAL_BOARD_GRAPH_RECALL_TOKEN=<distinct Graph Recall worker secret>
 CASUAL_BOARD_UI_PASSWORD=<browser login password>
 CASUAL_BOARD_SESSION_SECRET=<HMAC key for short-lived UI sessions>
 CASUAL_BOARD_SESSION_TTL_S=3600
@@ -24,7 +25,29 @@ CASUAL_BOARD_FORWARDED_ALLOW_IPS=127.0.0.1,::1
 CASUAL_BOARD_TRUSTED_HOSTS=api.apidiscoverysolution.uk,127.0.0.1,localhost
 CASUAL_BOARD_AI_PROVIDER=function
 CASUAL_BOARD_LOG_LEVEL=INFO
+
+# Optional evidence reviewer (API systemd only — never VITE_*, never worker env)
+# Default: none (deterministic Pydantic evidence gate only)
+CASUAL_BOARD_EVIDENCE_AI_PROVIDER=none
+CASUAL_BOARD_EVIDENCE_AI_MODEL=
 ```
+
+### Optional Mistral evidence reviewer (API process only)
+
+Leave provider `none` unless you want a second model call after Graph Recall.
+When enabled, add **only** to `/etc/casual-board.env` (API unit `EnvironmentFile`):
+
+```bash
+CASUAL_BOARD_EVIDENCE_AI_PROVIDER=mistral
+CASUAL_BOARD_EVIDENCE_AI_MODEL=mistral:mistral-small-latest
+MISTRAL_API_KEY=...
+```
+
+- Reviewer is **tool-less** (no browser, shell, graph, or retrieval tools).
+- Deterministic evidence gate remains final authority.
+- Missing/invalid key or provider failure → `insufficient_evidence` (never uncited “verified”).
+- **Do not** put `MISTRAL_API_KEY` in the Graph Recall worker env, browser, or any `VITE_*` variable.
+- Never print the key in install logs.
 
 Generate secrets:
 
@@ -32,8 +55,8 @@ Generate secrets:
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-**Never** put `CASUAL_BOARD_TOKEN`, `CASUAL_BOARD_BRIDGE_TOKEN`, or
-`CASUAL_BOARD_SESSION_SECRET` in any `VITE_*` variable.
+**Never** put `CASUAL_BOARD_TOKEN`, `CASUAL_BOARD_BRIDGE_TOKEN`,
+`CASUAL_BOARD_SESSION_SECRET`, or `MISTRAL_API_KEY` in any `VITE_*` variable.
 
 ## Frontend publish setting (Grok Build / rebuild)
 
@@ -74,59 +97,15 @@ ss -lntp | grep 8090
 | Path | Contents |
 |---|---|
 | `/var/lib/casual-board/board.json` | Board snapshot |
-| `/var/lib/casual-board/casual_board.sqlite3` | Durable bridge jobs + used nonces |
+| `/var/lib/casual-board/casual_board.sqlite3` | Durable bridge jobs + kitchen + evidence |
 | `/var/lib/casual-board/actions.jsonl` | Action audit log |
 
 ```bash
-# backup
-sudo tar -C /var/lib -czf /root/casual-board-$(date +%F).tgz casual-board
-# restore (service stopped)
-sudo systemctl stop casual-board-api
-sudo tar -C /var/lib -xzf /root/casual-board-YYYY-MM-DD.tgz
-sudo systemctl start casual-board-api
+sudo tar -C /var/lib -czf /var/backups/casual-board-data-$(date -u +%Y%m%d).tgz casual-board
 ```
 
-## Bridge worker (outbound only)
+## Health / smoke
 
 ```bash
-export CASUAL_BOARD_API_URL=https://api.apidiscoverysolution.uk
-export CASUAL_BOARD_BRIDGE_TOKEN=<same as server bridge token>
-python -m casual_board_bridge.main doctor
-python -m casual_board_bridge.main run
+curl -sS http://127.0.0.1:8090/health
 ```
-
-Stub executor only — **Hermes/mpv not claimed integrated**.
-
-## Verification commands
-
-```bash
-# 1) Public health (minimal)
-curl -sS https://api.apidiscoverysolution.uk/health
-# {"ok":true,"service":"casual-board","version":"...","time":"..."}
-
-# 2) Board is private
-curl -sS -o /dev/null -w '%{http_code}\n' https://api.apidiscoverysolution.uk/v1/board
-# 401
-
-# 3) UI login → session → capture
-TOKEN=$(curl -sS -X POST https://api.apidiscoverysolution.uk/v1/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"password":"'"$CASUAL_BOARD_UI_PASSWORD"'"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
-curl -sS https://api.apidiscoverysolution.uk/v1/board -H "Authorization: Bearer $TOKEN" | head -c 200
-curl -sS -X POST https://api.apidiscoverysolution.uk/v1/captures \
-  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"note":"verify capture from debian"}'
-
-# 4) Approved bridge job + lease + signed result
-# enqueue host job via session, approve with OWNER token, bridge worker leases it
-
-# 5) Restart persistence
-sudo systemctl restart casual-board-api
-# pending/queued jobs still in sqlite:
-sudo sqlite3 /var/lib/casual-board/casual_board.sqlite3 'select id,status from bridge_jobs;'
-```
-
-## Cloudflare Tunnel
-
-Keep routing `api.apidiscoverysolution.uk` → `http://127.0.0.1:8090` only.  
-No public bind of FastAPI on Debian.
