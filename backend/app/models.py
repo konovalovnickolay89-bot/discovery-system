@@ -473,12 +473,13 @@ class BridgeJobResultRequest(BaseModel):
 
 
 class StreamEvent(BaseModel):
-    type: Literal["snapshot", "revision", "action", "job", "ping", "error"]
+    type: Literal["snapshot", "revision", "action", "job", "cook_task", "ping", "error"]
     revision: int | None = None
     at: datetime
     board: Board | None = None
     action: ActionRecord | None = None
     job: BridgeJob | None = None
+    cook_task: dict | None = None
     detail: str | None = None
 
 

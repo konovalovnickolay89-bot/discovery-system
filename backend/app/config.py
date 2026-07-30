@@ -32,28 +32,19 @@ class Settings(BaseSettings):
     port: int = Field(default=8090, alias="CASUAL_BOARD_PORT")
     log_level: str = Field(default="INFO", alias="CASUAL_BOARD_LOG_LEVEL")
 
-    # Owner/admin — approvals only. Never browser.
     api_token: str = Field(default="", alias="CASUAL_BOARD_TOKEN")
-    # Debian bridge long-poll + HMAC. Never browser.
     bridge_token: str = Field(default="", alias="CASUAL_BOARD_BRIDGE_TOKEN")
-    # Browser UI login password (issues short-lived session tokens).
+    # Graph Recall culinary worker — distinct from host bridge. Never browser.
+    graph_recall_token: str = Field(default="", alias="CASUAL_BOARD_GRAPH_RECALL_TOKEN")
     ui_password: str = Field(default="", alias="CASUAL_BOARD_UI_PASSWORD")
-    # HMAC key for session tokens (prefer distinct from owner token).
     session_secret: str = Field(default="", alias="CASUAL_BOARD_SESSION_SECRET")
     session_ttl_s: int = Field(default=3600, alias="CASUAL_BOARD_SESSION_TTL_S")
 
     data_dir: Path = Field(default=Path("data"), alias="CASUAL_BOARD_DATA_DIR")
-    cors_origins: str = Field(
-        default=GROK_ME_WEB_ORIGIN,
-        alias="CASUAL_BOARD_CORS_ORIGINS",
-    )
+    cors_origins: str = Field(default=GROK_ME_WEB_ORIGIN, alias="CASUAL_BOARD_CORS_ORIGINS")
     public_base_url: str = Field(default="", alias="CASUAL_BOARD_PUBLIC_BASE_URL")
-    # Loopback-only API: only trust proxy from local tunnel agent
     trust_proxy: bool = Field(default=True, alias="CASUAL_BOARD_TRUST_PROXY")
-    forwarded_allow_ips: str = Field(
-        default="127.0.0.1,::1",
-        alias="CASUAL_BOARD_FORWARDED_ALLOW_IPS",
-    )
+    forwarded_allow_ips: str = Field(default="127.0.0.1,::1", alias="CASUAL_BOARD_FORWARDED_ALLOW_IPS")
     trusted_hosts: str = Field(
         default="api.apidiscoverysolution.uk,127.0.0.1,localhost",
         alias="CASUAL_BOARD_TRUSTED_HOSTS",
@@ -92,7 +83,6 @@ class Settings(BaseSettings):
         if not raw or raw == "*":
             if self.is_production:
                 return [GROK_ME_WEB_ORIGIN]
-            # dev: allow local preview + grok.me
             return ["*", GROK_ME_WEB_ORIGIN]
         origins = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
         if GROK_ME_WEB_ORIGIN not in origins:
@@ -146,11 +136,11 @@ class Settings(BaseSettings):
         if not self.api_token.strip():
             hard.append("CASUAL_BOARD_TOKEN required")
         if not self.bridge_token.strip():
-            hard.append("CASUAL_BOARD_BRIDGE_TOKEN required (must differ from owner token)")
+            hard.append("CASUAL_BOARD_BRIDGE_TOKEN required")
         if self.bridge_token and self.api_token and self.bridge_token == self.api_token:
             hard.append("CASUAL_BOARD_BRIDGE_TOKEN must be distinct from CASUAL_BOARD_TOKEN")
         if not self.ui_password.strip():
-            hard.append("CASUAL_BOARD_UI_PASSWORD required for private browser login")
+            hard.append("CASUAL_BOARD_UI_PASSWORD required")
         if not self.session_secret.strip():
             hard.append("CASUAL_BOARD_SESSION_SECRET required")
         if self.cors_origins.strip() == "*":

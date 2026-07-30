@@ -1,4 +1,4 @@
-"""SQLite persistence for sessions metadata and bridge jobs."""
+"""SQLite persistence — bridge jobs + Cook Studio kitchen tables."""
 
 from __future__ import annotations
 
@@ -58,6 +58,63 @@ def _migrate(conn: sqlite3.Connection) -> None:
             job_id TEXT NOT NULL,
             used_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS produce_lots (
+            id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_produce_status ON produce_lots(status);
+
+        CREATE TABLE IF NOT EXISTS ingredients (
+            id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            name TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS dishes (
+            id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS cook_consultations (
+            id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            task_status TEXT NOT NULL,
+            graph_recall_status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cook_task ON cook_consultations(task_status);
+        CREATE INDEX IF NOT EXISTS idx_cook_gr ON cook_consultations(graph_recall_status);
+
+        CREATE TABLE IF NOT EXISTS graph_recall_jobs (
+            id TEXT PRIMARY KEY,
+            consultation_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            leased_by TEXT,
+            lease_nonce TEXT,
+            lease_expires_at TEXT,
+            result_json TEXT,
+            message TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_gr_status ON graph_recall_jobs(status);
+
+        CREATE TABLE IF NOT EXISTS graph_recall_nonces (
+            nonce TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            used_at TEXT NOT NULL
+        );
         """
     )
     conn.commit()
@@ -70,6 +127,12 @@ def close() -> None:
             _conn.close()
         _conn = None
         _path = None
+
+
+def get_conn() -> sqlite3.Connection:
+    from .config import get_settings
+
+    return connect(get_settings().sqlite_path)
 
 
 def dumps(obj: Any) -> str:

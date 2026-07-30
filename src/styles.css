@@ -636,3 +636,27 @@ select.ec-input {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+.mode-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.mode-chip {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 8px 10px;
+  min-height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-muted);
+}
+.mode-chip.is-active {
+  border-color: color-mix(in oklab, var(--color-green) 50%, var(--color-border));
+  background: color-mix(in oklab, var(--color-green) 14%, var(--color-surface));
+  color: var(--color-green);
+}

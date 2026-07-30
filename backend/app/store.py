@@ -165,6 +165,34 @@ class BoardStore:
                 self._actions[action_id] = found
         return found
 
+    def emit_cook_task(self, consultation) -> None:
+        """Fan-out Cook Studio task state for dashboard card / WS."""
+        plan = consultation.local_safety_plan
+        verdict = ""
+        if isinstance(plan, dict):
+            verdict = (plan.get("decision") or {}).get("verdict", "")
+        else:
+            verdict = getattr(plan, "decision", {}).get("verdict", "") if plan else ""
+        snap = {
+            "id": consultation.id,
+            "mode": consultation.mode.value if hasattr(consultation.mode, "value") else consultation.mode,
+            "title": consultation.title,
+            "task_status": consultation.task_status.value if hasattr(consultation.task_status, "value") else consultation.task_status,
+            "graph_recall_status": consultation.graph_recall_status.value if hasattr(consultation.graph_recall_status, "value") else consultation.graph_recall_status,
+            "safety_verdict": verdict,
+            "blocked_reason": consultation.blocked_reason,
+            "updated_at": consultation.updated_at.isoformat() if consultation.updated_at else None,
+        }
+        self._emit(
+            StreamEvent(
+                type="cook_task",
+                revision=self.get().meta.revision,
+                at=consultation.updated_at,
+                cook_task=snap,
+                detail=consultation.title,
+            )
+        )
+
     def emit_job(self, job: BridgeJob) -> None:
         self._emit(
             StreamEvent(

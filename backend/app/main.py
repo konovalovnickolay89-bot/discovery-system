@@ -47,6 +47,7 @@ from .models import (
 )
 from .evolving_cook import plan_evolving_cook
 from .sessions import login_with_password, require_session, verify_session
+from .cook_routes import router as cook_router
 from .store import get_store
 
 log = logging.getLogger("casual_board.api")
@@ -89,6 +90,9 @@ app.add_middleware(
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+app.include_router(cook_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["ops"])

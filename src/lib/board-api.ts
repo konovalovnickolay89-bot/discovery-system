@@ -161,6 +161,7 @@ export function connectBoardSocket(opts: {
   onBoard: (b: Board) => void;
   onStatus?: (s: string) => void;
   onAuthError?: () => void;
+  onCookTask?: (task: Record<string, unknown>) => void;
 }): () => void {
   let ws: WebSocket | null = null;
   let closed = false;
@@ -188,9 +189,16 @@ export function connectBoardSocket(opts: {
     };
     ws.onmessage = (ev) => {
       try {
-        const msg = JSON.parse(String(ev.data)) as { type?: string; board?: Board };
+        const msg = JSON.parse(String(ev.data)) as {
+          type?: string;
+          board?: Board;
+          cook_task?: Record<string, unknown>;
+        };
         if (msg.board && (msg.type === "snapshot" || msg.type === "revision")) {
           opts.onBoard(msg.board);
+        }
+        if (msg.type === "cook_task" && msg.cook_task) {
+          opts.onCookTask?.(msg.cook_task);
         }
       } catch {
         /* ignore */
