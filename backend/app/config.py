@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     # Graph Recall culinary worker lease (long enough for Hermes)
     graph_recall_lease_ttl_s: int = Field(default=300, alias="CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S")
     graph_recall_reap_interval_s: int = Field(default=15, alias="CASUAL_BOARD_GRAPH_RECALL_REAP_INTERVAL_S")
+    # Evidence / research — server only (never VITE_*)
+    research_enabled: bool = Field(default=False, alias="CASUAL_BOARD_RESEARCH_ENABLED")
+    research_allowlist_domains: str = Field(
+        default="www.food.gov.uk,food.gov.uk,www.foodstandards.gov.scot,www.fsai.ie",
+        alias="CASUAL_BOARD_RESEARCH_ALLOWLIST",
+    )
+    logseq_graph_root: str = Field(
+        default="/home/discovery-system/Logseq/graph",
+        alias="CASUAL_BOARD_LOGSEQ_GRAPH_ROOT",
+    )
     strict_env: bool = Field(default=False, alias="CASUAL_BOARD_STRICT_ENV")
 
     @field_validator("app_env")

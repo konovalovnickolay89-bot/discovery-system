@@ -299,8 +299,16 @@ def merge_kitchen_memory(
     enrichment: dict,
     *,
     proposed_guest_service: bool | None,
+    research_status: str | None = None,
+    research_pending_ids: list[str] | None = None,
+    sources_conflict: bool = False,
+    structurer=None,
 ) -> CookConsultation:
-    """Apply Graph Recall enrichment without overriding local safety."""
+    """Apply Graph Recall enrichment + evidence gate without overriding local safety."""
+    from .evidence_gate import apply_evidence_gate_to_consultation
+    from .evidence_models import ResearchStatus
+    from .research import fetch_research_pending
+
     plan = c.local_safety_plan
     if isinstance(plan, dict):
         plan = CookStudioPlan.model_validate(plan)
@@ -313,12 +321,13 @@ def merge_kitchen_memory(
             path=str(m.get("path") or ""),
             relevance=str(m.get("relevance") or ""),
             excerpt=str(m.get("excerpt") or ""),
+            source_id=str(m.get("source_id") or ""),
+            authority_tier=m.get("authority_tier"),
         )
         for m in memory
     ]
     plan.kitchen_memory = items
 
-    # never flip rejected or guest_service_allowed upward if local said no
     if plan.rejected:
         plan.notes = list(plan.notes) + [
             "Kitchen memory ignored for creative routes — task remains blocked by local safety."
@@ -327,7 +336,6 @@ def merge_kitchen_memory(
             plan.notes.append("Worker proposed guest service — rejected by local safety.")
     else:
         if enrichment.get("primary_plan") and isinstance(enrichment["primary_plan"], dict):
-            # enrich summary only
             base = dict(plan.primary_plan)
             base["kitchen_memory_note"] = enrichment["primary_plan"].get("summary") or enrichment.get(
                 "note"
@@ -339,20 +347,111 @@ def merge_kitchen_memory(
             ]
         plan.notes = list(plan.notes) + ["Kitchen memory applied as enrichment only."]
 
+    rs = ResearchStatus.not_needed
+    pending_ids = list(research_pending_ids or [])
+    if research_status:
+        try:
+            rs = ResearchStatus(research_status)
+        except Exception:  # noqa: BLE001
+            rs = ResearchStatus.not_needed
+
+    if not plan.rejected and not memory and not pending_ids:
+        try:
+            rs2, pids, _findings = fetch_research_pending(
+                c.ingredients_or_problem or c.title,
+                consultation_id=c.id,
+            )
+            if pids:
+                rs = rs2
+                pending_ids = pids
+                plan.notes = list(plan.notes) + [
+                    "Research findings saved as pending_review — not auto-canonical."
+                ]
+        except Exception:  # noqa: BLE001
+            pass
+
+    rec = plan.recommended_action or enrichment.get("note") or ""
+    verdict = str((plan.decision or {}).get("verdict") or "unknown")
+    gated = apply_evidence_gate_to_consultation(
+        c.id,
+        kitchen_memory=[m.model_dump() for m in items],
+        enrichment=enrichment or {},
+        recommendation=rec,
+        safety_verdict=verdict,
+        local_blocked=bool(plan.rejected),
+        research_status=rs,
+        research_pending_ids=pending_ids,
+        structurer=structurer,
+        sources_conflict=sources_conflict,
+    )
+
+    tiers = [int(ci.authority_tier.value) for ci in gated.citations]
+    plan.evidence_source_count = len(gated.citations)
+    plan.evidence_best_tier = min(tiers) if tiers else None
+    plan.evidence_gate_status = gated.gate_status.value
+    plan.evidence_research_status = gated.research_status.value
+    plan.evidence_verified = bool(gated.verified_for_professional_use)
+    plan.evidence_unknowns = list(gated.unknowns_or_conflicts)
+    plan.evidence_citations = [ci.model_dump(mode="json") for ci in gated.citations]
+
+    if not gated.verified_for_professional_use and not plan.rejected:
+        plan.notes = list(plan.notes) + [
+            "Not a verified professional recommendation — insufficient evidence or pending review."
+        ]
+
+    if gated.citations:
+        by_path = {ci.path_or_url: ci for ci in gated.citations}
+        new_items = []
+        for m in items:
+            ci = by_path.get(m.path)
+            if ci:
+                new_items.append(
+                    m.model_copy(
+                        update={
+                            "source_id": ci.source_id,
+                            "authority_tier": int(ci.authority_tier.value),
+                        }
+                    )
+                )
+            else:
+                new_items.append(m)
+        plan.kitchen_memory = new_items
+
+    now = _now()
     c = c.model_copy(
         update={
             "local_safety_plan": plan,
             "graph_recall_status": GraphRecallStatus.completed,
-            "graph_recall_response": {"kitchen_memory": memory, "enrichment": enrichment},
+            "graph_recall_response": {
+                "kitchen_memory": memory,
+                "enrichment": enrichment,
+                "evidence_gate": gated.model_dump(mode="json"),
+            },
+            "evidence_bundle": {
+                "gate_status": gated.gate_status.value,
+                "research_status": gated.research_status.value,
+                "verified": gated.verified_for_professional_use,
+                "source_count": plan.evidence_source_count,
+                "best_tier": plan.evidence_best_tier,
+            },
             "task_status": CookTaskStatus.blocked
             if plan.rejected
             else CookTaskStatus.kitchen_memory_returned,
-            "updated_at": _now(),
+            "updated_at": now,
             "audit": list(c.audit)
-            + [{"at": _now().isoformat(), "event": "kitchen_memory_returned"}],
+            + [
+                {
+                    "at": now.isoformat(),
+                    "event": "kitchen_memory_returned",
+                    "gate_status": gated.gate_status.value,
+                    "verified": gated.verified_for_professional_use,
+                }
+            ],
         }
     )
     return save_consultation(c)
+
+
 
 
 def active_task_snapshot() -> list[dict]:

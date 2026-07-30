@@ -52,6 +52,10 @@ function mark(done: boolean) {
   return done ? "✓" : "·";
 }
 
+function planOf(c: CookConsultation | null) {
+  return c?.local_safety_plan as CookConsultation["local_safety_plan"] | undefined;
+}
+
 function pipeline(c: CookConsultation | null) {
   if (!c) {
     return {
@@ -66,9 +70,13 @@ function pipeline(c: CookConsultation | null) {
   const safety =
     ts !== "draft" ||
     !!c.local_safety_plan ||
-    ["blocked", "local_plan_ready", "kitchen_memory_queued", "kitchen_memory_working", "kitchen_memory_returned"].includes(
-      ts,
-    );
+    [
+      "blocked",
+      "local_plan_ready",
+      "kitchen_memory_queued",
+      "kitchen_memory_working",
+      "kitchen_memory_returned",
+    ].includes(ts);
   const local = [
     "local_plan_ready",
     "kitchen_memory_queued",
@@ -83,14 +91,13 @@ function pipeline(c: CookConsultation | null) {
   else if (gr === "leased") km = "working";
   else if (gr === "completed") km = "returned";
   else if (gr === "failed") km = "unavailable";
-  else if (gr === "not_requested") km = "none";
 
   let next = "Review local plan";
   if (ts === "blocked") next = "Disposal / escalate — no cook-forward routes";
   else if (km === "queued") next = "Kitchen memory pending";
   else if (km === "working") next = "Kitchen memory working";
   else if (km === "unavailable") next = "Local plan only — Kitchen memory unavailable";
-  else if (km === "returned") next = "Review Kitchen memory & finish";
+  else if (km === "returned") next = "Review evidence & finish";
   else if (local) next = c.local_safety_plan?.recommended_action || "Execute primary plan";
 
   return { safety, local, km, next };
@@ -109,6 +116,80 @@ function verdictText(c: CookConsultation | null) {
   if (!d) return null;
   const v = (d.verdict || "").replace(/_/g, " ");
   return `${v}${d.title ? ` — ${d.title}` : ""}`;
+}
+
+function EvidenceStrip({ c }: { c: CookConsultation }) {
+  const [open, setOpen] = useState(false);
+  const plan = planOf(c);
+  if (!plan) return null;
+  const count = plan.evidence_source_count ?? 0;
+  const tier = plan.evidence_best_tier;
+  const gate = plan.evidence_gate_status || "";
+  const research = plan.evidence_research_status || "not_needed";
+  const verified = !!plan.evidence_verified;
+  const cites = plan.evidence_citations || [];
+  const unknowns = plan.evidence_unknowns || [];
+
+  let statusLine = "";
+  if (c.task_status === "blocked") statusLine = "Blocked by local safety";
+  else if (c.graph_recall_status === "failed") statusLine = "Kitchen memory unavailable";
+  else if (c.graph_recall_status === "queued" || c.graph_recall_status === "leased")
+    statusLine = "Kitchen memory pending";
+  else if (research === "pending_review") statusLine = "Research pending review";
+  else if (gate === "insufficient_evidence") statusLine = "Insufficient evidence";
+  else if (verified) statusLine = "Cited sources on file";
+  else if (c.graph_recall_status === "completed") statusLine = "Kitchen memory returned — not auto-verified";
+
+  if (!statusLine && !count && c.graph_recall_status === "not_requested") return null;
+
+  return (
+    <div className="ec-route mt-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="font-mono text-xs uppercase tracking-wide text-muted">Evidence</div>
+        <button type="button" className="signout-btn" onClick={() => setOpen((o) => !o)}>
+          {open ? "hide citations" : "citations"}
+        </button>
+      </div>
+      <div className="meta-dim mt-1 space-y-0.5 text-sm">
+        <div>
+          Sources: {count}
+          {tier != null ? ` · best tier ${tier}` : ""}
+          {verified ? " · verified" : " · not verified professional recommendation"}
+        </div>
+        {statusLine ? <div className={verified ? "status-ok" : "level-warn"}>{statusLine}</div> : null}
+      </div>
+      {open ? (
+        <div className="mt-2 space-y-2 text-sm">
+          {cites.length ? (
+            <ul className="m-0 list-disc pl-4">
+              {cites.map((ci) => (
+                <li key={ci.source_id + (ci.path_or_url || "")}>
+                  <strong>{ci.title}</strong>
+                  {ci.authority_tier != null ? ` · T${ci.authority_tier}` : ""}
+                  {ci.path_or_url ? (
+                    <div className="meta-dim font-mono text-xs break-all">{ci.path_or_url}</div>
+                  ) : null}
+                  {ci.excerpt ? <div className="meta-dim">{ci.excerpt}</div> : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="meta-dim m-0">No resolvable citations yet.</p>
+          )}
+          {unknowns.length ? (
+            <div>
+              <div className="ec-step">Unknowns / conflicts</div>
+              <ul className="m-0 list-disc pl-4 text-sm">
+                {unknowns.map((u) => (
+                  <li key={u}>{u}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function EvolvingCookCard({
@@ -152,20 +233,15 @@ export function EvolvingCookCard({
     void loadLib();
   }, [loadLib]);
 
-  // Prefer live WS task; else first active consultation
   useEffect(() => {
     const id =
-      (typeof liveTask?.id === "string" && liveTask.id) ||
-      activeTasks[0]?.id ||
-      null;
+      (typeof liveTask?.id === "string" && liveTask.id) || activeTasks[0]?.id || null;
     if (!id) return;
-    if (active?.id === id && !liveTask) return;
     void getConsultation(id)
       .then(setActive)
       .catch(() => undefined);
-  }, [liveTask, activeTasks, active?.id]);
+  }, [liveTask, activeTasks]);
 
-  // Refresh active from list when tasks update without full id detail
   useEffect(() => {
     if (active || !activeTasks.length) return;
     void listConsultations(true)
@@ -253,8 +329,8 @@ export function EvolvingCookCard({
             evolving cook
           </h2>
           <p className="meta-dim m-0 text-sm leading-relaxed">
-            Line entry for build, rescue, service & develop. Safety first — Kitchen memory only when
-            the worker is verified.
+            Line entry for build, rescue, service & develop. Safety first — citations required for
+            verified claims.
           </p>
         </div>
         <button type="button" className="signout-btn shrink-0" onClick={() => setFullOpen(true)}>
@@ -262,7 +338,6 @@ export function EvolvingCookCard({
         </button>
       </div>
 
-      {/* Active task pipeline — single surface, no separate card */}
       <div className="ec-route mt-3" aria-live="polite">
         {active ? (
           <>
@@ -290,13 +365,13 @@ export function EvolvingCookCard({
                 <div className="level-warn">{active.blocked_reason}</div>
               ) : null}
             </div>
+            <EvidenceStrip c={active} />
           </>
         ) : (
           <p className="meta-dim m-0 text-sm">No active consultation — start one below.</p>
         )}
       </div>
 
-      {/* Modes */}
       <div className="mode-strip mt-3" role="tablist" aria-label="Cook mode">
         {MODES.map((m) => (
           <button
@@ -384,7 +459,6 @@ export function EvolvingCookCard({
           />
         </div>
 
-        {/* Compact stock picks */}
         {(produce.length > 0 || ingredients.length > 0) && (
           <div className="ec-route">
             <div className="ec-label mb-1">From stock (optional)</div>
@@ -432,7 +506,6 @@ export function EvolvingCookCard({
         </div>
       ) : null}
 
-      {/* Concise result strip */}
       {active?.local_safety_plan ? (
         <div className="mt-3 flex flex-col gap-2">
           <div>
@@ -442,19 +515,13 @@ export function EvolvingCookCard({
               {active.local_safety_plan.decision.summary}
             </p>
           </div>
-          {(selectedProduce.length > 0 ||
-            selectedIngs.length > 0 ||
-            active.produce_lot_ids?.length ||
-            active.ingredient_ids?.length) && (
+          {(selectedProduce.length > 0 || selectedIngs.length > 0) && (
             <div>
               <div className="ec-step">Selected stock</div>
               <p className="meta-dim m-0 text-sm">
                 {[
                   ...selectedProduce.map((p) => p.name),
                   ...selectedIngs.map((i) => i.name),
-                  ...(active.ingredients_or_problem
-                    ? [active.ingredients_or_problem.split("\n")[0]!.slice(0, 60)]
-                    : []),
                 ]
                   .filter(Boolean)
                   .slice(0, 6)
@@ -471,9 +538,7 @@ export function EvolvingCookCard({
                 ? " — not claimed live until worker verified"
                 : pipe.km === "unavailable"
                   ? " — local plan stands"
-                  : pipe.km === "none"
-                    ? " — local plan only"
-                    : ""}
+                  : ""}
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -493,7 +558,7 @@ export function EvolvingCookCard({
       ) : null}
 
       <div className="board-card-footer">
-        dashboard entry · full studio for stock, dishes, history · Graph Recall not claimed live
+        evidence-gated · Graph Recall not claimed live · research never auto-canonical
       </div>
     </section>
   );

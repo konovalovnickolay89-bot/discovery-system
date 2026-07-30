@@ -1,4 +1,4 @@
-"""Cook Studio REST routes — kitchen library + consultations + Graph Recall worker."""
+"""Cook Studio REST routes — kitchen library + consultations + Graph Recall + sources."""
 
 from __future__ import annotations
 
@@ -6,6 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .auth import require_graph_recall
 from .cook_studio import create_consultation
+from .evidence_models import CanonicalSource, CanonicalSourceCreate, SourceEvidence
+from .evidence_store import (
+    create_source,
+    get_consultation_evidence,
+    list_evidence_for_consultation,
+    list_sources,
+    seed_official_fsa_placeholder,
+)
 from .graph_recall_queue import complete_result, long_poll_lease, reap_expired_leases
 from .kitchen_models import (
     CookConsultation,
@@ -113,11 +121,34 @@ def api_delete_dish(dish_id: str, _s: dict = Depends(require_session)):
     return {"ok": True}
 
 
+# --- canonical sources + evidence ---
+@router.get("/v1/sources", response_model=list[CanonicalSource])
+def api_list_sources(
+    active_only: bool = Query(default=True),
+    _s: dict = Depends(require_session),
+):
+    seed_official_fsa_placeholder()
+    return list_sources(active_only=active_only)
+
+
+@router.post("/v1/sources", response_model=CanonicalSource)
+def api_create_source(body: CanonicalSourceCreate, _s: dict = Depends(require_session)):
+    return create_source(body)
+
+
+@router.get("/v1/cook/consultations/{cid}/evidence")
+def api_consultation_evidence(cid: str, _s: dict = Depends(require_session)):
+    if not get_consultation(cid):
+        raise HTTPException(404, "consultation not found")
+    bundle = get_consultation_evidence(cid) or {}
+    evidence = [e.model_dump(mode="json") for e in list_evidence_for_consultation(cid)]
+    return {"consultation_id": cid, "bundle": bundle, "evidence": evidence}
+
+
 # --- consultations ---
 @router.post("/v1/cook/consultations", response_model=CookConsultation)
-def api_create_consultation(body: CookConsultationCreate, session: dict = Depends(require_session)):
-    actor = str(session.get("sub") or "session")
-    return create_consultation(body, actor=actor)
+def api_create_consultation(body: CookConsultationCreate, s: dict = Depends(require_session)):
+    return create_consultation(body, actor=s.get("sub") or "session")
 
 
 @router.get("/v1/cook/consultations", response_model=list[CookConsultation])
@@ -126,7 +157,9 @@ def api_list_consultations(
     _s: dict = Depends(require_session),
 ):
     reap_expired_leases()
-    return list_active_consultations() if active else list_consultations()
+    if active:
+        return list_active_consultations()
+    return list_consultations()
 
 
 @router.get("/v1/cook/consultations/{cid}", response_model=CookConsultation)
@@ -140,11 +173,11 @@ def api_get_consultation(cid: str, _s: dict = Depends(require_session)):
 
 @router.post("/v1/cook/consultations/{cid}/complete", response_model=CookConsultation)
 def api_complete_consultation(cid: str, _s: dict = Depends(require_session)):
+    from datetime import datetime, timezone
+
     c = get_consultation(cid)
     if not c:
         raise HTTPException(404, "consultation not found")
-    from datetime import datetime, timezone
-
     now = datetime.now(timezone.utc)
     c = c.model_copy(
         update={

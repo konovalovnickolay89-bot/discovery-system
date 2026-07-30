@@ -43,6 +43,14 @@ export type Dish = {
   status: string;
 };
 
+export type EvidenceCitation = {
+  source_id: string;
+  title: string;
+  path_or_url?: string;
+  excerpt?: string;
+  authority_tier?: number;
+};
+
 export type CookConsultation = {
   id: string;
   mode: string;
@@ -74,10 +82,24 @@ export type CookConsultation = {
     allergen_checks: string[];
     service_checks: string[];
     disposal_checklist: string[];
-    kitchen_memory: { title: string; path: string; relevance: string; excerpt: string }[];
+    kitchen_memory: {
+      title: string;
+      path: string;
+      relevance: string;
+      excerpt: string;
+      source_id?: string;
+      authority_tier?: number | null;
+    }[];
     guest_service_allowed: boolean;
     rejected: boolean;
     notes: string[];
+    evidence_source_count?: number;
+    evidence_best_tier?: number | null;
+    evidence_gate_status?: string;
+    evidence_research_status?: string;
+    evidence_verified?: boolean;
+    evidence_unknowns?: string[];
+    evidence_citations?: EvidenceCitation[];
   };
   graph_recall_status: string;
   graph_recall_response: Record<string, unknown> | null;
@@ -86,6 +108,13 @@ export type CookConsultation = {
   created_at: string;
   updated_at: string;
   blocked_reason: string | null;
+  evidence_bundle?: {
+    gate_status?: string;
+    research_status?: string;
+    verified?: boolean;
+    source_count?: number;
+    best_tier?: number | null;
+  } | null;
 };
 
 export async function listProduce() {

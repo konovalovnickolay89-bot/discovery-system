@@ -1,4 +1,4 @@
-"""SQLite persistence — bridge jobs + Cook Studio kitchen tables."""
+"""SQLite persistence — bridge jobs + Cook Studio kitchen tables + evidence registry."""
 
 from __future__ import annotations
 
@@ -114,6 +114,32 @@ def _migrate(conn: sqlite3.Connection) -> None:
             nonce TEXT PRIMARY KEY,
             job_id TEXT NOT NULL,
             used_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS canonical_sources (
+            id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            authority_tier INTEGER NOT NULL DEFAULT 5,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_src_active ON canonical_sources(active);
+        CREATE INDEX IF NOT EXISTS idx_src_tier ON canonical_sources(authority_tier);
+
+        CREATE TABLE IF NOT EXISTS source_evidence (
+            id TEXT PRIMARY KEY,
+            source_id TEXT NOT NULL,
+            consultation_id TEXT,
+            data_json TEXT NOT NULL,
+            retrieved_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ev_source ON source_evidence(source_id);
+        CREATE INDEX IF NOT EXISTS idx_ev_consult ON source_evidence(consultation_id);
+
+        CREATE TABLE IF NOT EXISTS consultation_evidence (
+            consultation_id TEXT PRIMARY KEY,
+            data_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         """
     )

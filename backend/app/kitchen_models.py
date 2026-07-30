@@ -208,6 +208,8 @@ class KitchenMemoryItem(BaseModel):
     path: str = ""
     relevance: str = ""
     excerpt: str = ""
+    source_id: str = ""
+    authority_tier: int | None = None
 
 
 class CookStudioPlan(BaseModel):
@@ -223,6 +225,14 @@ class CookStudioPlan(BaseModel):
     guest_service_allowed: bool = False
     rejected: bool = False
     notes: list[str] = Field(default_factory=list)
+    # Evidence layer (concise; full gated result also on consultation)
+    evidence_source_count: int = 0
+    evidence_best_tier: int | None = None
+    evidence_gate_status: str = ""
+    evidence_research_status: str = "not_needed"
+    evidence_verified: bool = False
+    evidence_unknowns: list[str] = Field(default_factory=list)
+    evidence_citations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CookConsultationCreate(BaseModel):
@@ -265,6 +275,7 @@ class CookConsultation(BaseModel):
     created_at: datetime
     updated_at: datetime
     blocked_reason: str | None = None
+    evidence_bundle: dict[str, Any] | None = None
 
 
 class GraphRecallLeaseResponse(BaseModel):
@@ -281,7 +292,6 @@ class GraphRecallResultRequest(BaseModel):
     worker_id: str = "graph-recall"
     lease_nonce: str = ""
     signature: str = ""
-    # worker may suggest routes but cannot override safety
     proposed_guest_service: bool | None = None
 
 
