@@ -34,9 +34,13 @@ def validate_hermes_argv(cmd: list[str]) -> None:
     if not cmd or cmd[0] != "hermes":
         raise InvalidHermesCLIError("command must start with hermes")
     if "--toolset" in cmd:
-        raise InvalidHermesCLIError("unsupported flag --toolset (use profile tools via HERMES_HOME)")
+        raise InvalidHermesCLIError(
+            "unsupported flag --toolset (tools come from HERMES_HOME profile)"
+        )
     if "--timeout" in cmd:
-        raise InvalidHermesCLIError("unsupported flag --timeout (use Python subprocess timeout)")
+        raise InvalidHermesCLIError(
+            "unsupported flag --timeout (use Python subprocess timeout)"
+        )
     if "-z" in cmd:
         i = cmd.index("-z")
         if i + 1 >= len(cmd) or cmd[i + 1].startswith("-"):
@@ -54,9 +58,8 @@ def build_hermes_command(prompt: str, *, toolsets: str | None = None) -> list[st
     Graph Recall invocation:
       HERMES_HOME=... hermes -z '<structured culinary enquiry>'
     Prompt is an argv element (not stdin). Tools come from the graph-recall profile.
-    Casual Board does not pass --toolsets or call logseq-graph.
     """
-    del toolsets  # intentionally unused — profile owns tools
+    del toolsets  # unused — profile owns tools
     cmd: list[str] = ["hermes", "-z", prompt]
     validate_hermes_argv(cmd)
     return cmd
@@ -87,8 +90,10 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def validate_graph_recall_output(parsed: dict[str, Any] | None) -> tuple[bool, str | None, dict[str, Any]]:
-    """Pydantic-like structural validation of Hermes Graph Recall JSON."""
+def validate_graph_recall_output(
+    parsed: dict[str, Any] | None,
+) -> tuple[bool, str | None, dict[str, Any]]:
+    """Structural validation of Hermes Graph Recall JSON."""
     if not parsed or not isinstance(parsed, dict):
         return False, "malformed_json", {}
     mem = parsed.get("kitchen_memory")
@@ -111,13 +116,14 @@ def validate_graph_recall_output(parsed: dict[str, Any] | None) -> tuple[bool, s
         title = str(raw.get("title") or "").strip()
         if not title:
             continue
+        finding = str(raw.get("finding") or raw.get("excerpt") or "").strip()
         cleaned_mem.append(
             {
                 "title": title,
                 "path": str(raw.get("path") or "").strip(),
                 "relevance": str(raw.get("relevance") or "").strip(),
-                "finding": str(raw.get("finding") or raw.get("excerpt") or "").strip(),
-                "excerpt": str(raw.get("finding") or raw.get("excerpt") or "").strip(),
+                "finding": finding,
+                "excerpt": finding,
             }
         )
     return True, None, {
@@ -279,7 +285,11 @@ def dry_run_hermes_parser(prompt: str = "ping") -> tuple[bool, str]:
             check=False,
         )
         err = ((proc.stderr or "") + (proc.stdout or "")).lower()
-        if "unrecognized arguments" in err or "invalid option" in err or "no such option" in err:
+        if (
+            "unrecognized arguments" in err
+            or "invalid option" in err
+            or "no such option" in err
+        ):
             return False, f"hermes rejected argv: {err[:200]}"
         return True, "hermes accepted argv shape (or ran without arg error)"
     except FileNotFoundError:

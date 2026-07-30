@@ -7,13 +7,15 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/casual-board/debian-graph-recall-worker
 EnvironmentFile=%h/.config/casual-board/graph-recall-worker.env
+# Hermes on user local bin; also set in EnvironmentFile
+Environment=PATH=/home/discovery-system/.local/bin:/usr/local/bin:/usr/bin:/bin
 # HOME and HERMES_HOME must be set in EnvironmentFile
 ExecStart=/opt/casual-board/debian-graph-recall-worker/.venv/bin/python -m casual_board_graph_recall_worker run
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
-# No new public ports — only loopback API + outbound model inference via Hermes
+# No new public ports — only loopback API + Graph Recall via hermes -z
 
 [Install]
 WantedBy=default.target

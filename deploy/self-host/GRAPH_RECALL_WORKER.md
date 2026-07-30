@@ -11,29 +11,28 @@ Never uses Cloudflare URL, browser sessions, UI password, owner token, or host-b
 ## 0) Hermes CLI shape (verify on the host before install)
 
 ```bash
-sudo -u discovery-system -H bash -lc 'hermes --help | head -40'
-sudo -u discovery-system -H bash -lc 'hermes tools list'
+sudo -u discovery-system -H bash -lc '
+  export PATH=/home/discovery-system/.local/bin:/usr/local/bin:/usr/bin:/bin
+  hermes --help | head -40
+'
 ```
 
-Expected flags (this worker targets):
+Expected:
 
-* `-z` / `--oneshot <PROMPT>` — prompt as argument, not stdin  
-* `-t` / `--toolsets <comma-separated>` — **not** `--toolset`  
-* **no** Hermes `--timeout` (worker uses Python `subprocess` timeout)
+* `hermes -z` / `--oneshot <PROMPT>` — prompt as argument, not stdin  
+* **no** Hermes `--timeout` (worker uses Python `subprocess` timeout)  
+* Graph Recall profile at `HERMES_HOME=~/.hermes/profiles/graph-recall` owns retrieval/tools  
 
-Prefer **empty toolsets** (synthesis-only). Only set `CASUAL_BOARD_HERMES_TOOLSETS` after `hermes tools list` confirms a name **without** terminal/shell/file capability.  
-Do **not** invent `graph-recall-read-first`.
-
-Retrieval is **not** Hermes:
+Casual Board **does not** call host graph CLIs. Invocation is only:
 
 ```bash
-logseq-graph recall "<query>" --limit 6
+HERMES_HOME=/home/discovery-system/.hermes/profiles/graph-recall hermes -z '<prompt>'
 ```
 
 ## 1) Fetch revision into a temp location (not /opt/casual-board)
 
 ```bash
-REV=81512d1   # or newer commit after this fix
+REV=d3e1aa7   # replace with the commit you are installing
 STAGE=$(mktemp -d /tmp/casual-board-stage.XXXXXX)
 sudo -u discovery-system git clone --depth 1 \
   https://github.com/konovalovnickolay89-bot/discovery-system.git "$STAGE/repo"
@@ -52,18 +51,15 @@ sudo tar -C /opt -czf "/var/backups/casual-board/casual-board-${TS}.tgz" casual-
 ## 3) Synchronise backend + worker into /opt/casual-board (preserve venvs)
 
 ```bash
-# API package
 sudo rsync -a --delete \
   --exclude '.venv' --exclude 'data' --exclude '__pycache__' --exclude '*.pyc' \
   "$STAGE/repo/backend/" /opt/casual-board/backend/
 
-# Worker package
 sudo mkdir -p /opt/casual-board/debian-graph-recall-worker
 sudo rsync -a --delete \
   --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
   "$STAGE/repo/debian-graph-recall-worker/" /opt/casual-board/debian-graph-recall-worker/
 
-# Deploy docs / units
 sudo mkdir -p /opt/casual-board/deploy/self-host
 sudo rsync -a "$STAGE/repo/deploy/self-host/" /opt/casual-board/deploy/self-host/
 
@@ -72,10 +68,11 @@ sudo chown -R discovery-system:discovery-system /opt/casual-board
 
 ## 4) API env + restart (loopback unchanged)
 
-Ensure `/etc/casual-board.env` includes (values already set — do not print tokens):
+Ensure `/etc/casual-board.env` includes (do not print tokens):
 
 * `CASUAL_BOARD_GRAPH_RECALL_TOKEN`
 * `CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S=300`
+* `CASUAL_BOARD_EVIDENCE_AI_PROVIDER=none` (default — no second model keys required)
 
 ```bash
 sudo systemctl restart casual-board-api
@@ -86,6 +83,7 @@ ss -lntp | grep 8090   # must be 127.0.0.1:8090 only
 
 ```bash
 sudo -u discovery-system -H bash -lc '
+  export PATH=/home/discovery-system/.local/bin:/usr/local/bin:/usr/bin:/bin
   cd /opt/casual-board/debian-graph-recall-worker
   if [ ! -d .venv ]; then python3 -m venv .venv; fi
   .venv/bin/pip install -U pip
@@ -112,18 +110,14 @@ CASUAL_BOARD_GRAPH_RECALL_TOKEN=$tok
 CASUAL_BOARD_GRAPH_RECALL_WORKER_ID=graph-recall@debian-minimal
 CASUAL_BOARD_GRAPH_RECALL_LEASE_TTL_S=300
 CASUAL_BOARD_GRAPH_RECALL_HERMES_TIMEOUT_S=240
-CASUAL_BOARD_HERMES_TOOLSETS=
 HOME=/home/discovery-system
 HERMES_HOME=/home/discovery-system/.hermes/profiles/graph-recall
-CASUAL_BOARD_LOGSEQ_GRAPH_ROOT=/home/discovery-system/Logseq/graph
+PATH=/home/discovery-system/.local/bin:/usr/local/bin:/usr/bin:/bin
 EOF
   chown discovery-system:discovery-system /home/discovery-system/.config/casual-board/graph-recall-worker.env
   chmod 600 /home/discovery-system/.config/casual-board/graph-recall-worker.env
 '
 ```
-
-Empty `CASUAL_BOARD_HERMES_TOOLSETS` = synthesis-only (no Hermes tools).  
-Only set a name after `hermes tools list` proves it has no terminal/file capability.
 
 ## 7) Enable user worker service + linger
 
@@ -149,8 +143,8 @@ sudo rm -rf "$STAGE"
 
 1. API bound only to `127.0.0.1:8090`
 2. Worker active as `discovery-system`
-3. Phone safe task: queued → working → **returned** with Logseq paths under the graph root
-4. `logseq-graph recall` used for retrieval; Hermes only synthesises
+3. Phone safe task: queued → working → **returned** with cited Graph Recall paths
+4. Worker process is `hermes -z …` only (no host graph CLI from Casual Board)
 5. Stop worker → local plan usable; lease expiry → visibly **queued**
 6. Restart → completes **once**
 7. No token/password in logs, browser assets, or install output
