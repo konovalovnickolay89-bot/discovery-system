@@ -38,6 +38,8 @@ from .models import (
     ItemSource,
     LoginRequest,
     SessionResponse,
+    StartFreshRequest,
+    StartFreshResponse,
     StreamEvent,
     TodayItem,
 )
@@ -283,9 +285,38 @@ def chat_panel(body: ChatMessageRequest, session: dict = Depends(require_session
     )
 
 
-@app.post("/v1/admin/reset", response_model=Board, tags=["ops"])
-def admin_reset(_a: str = Depends(require_owner)) -> Board:
-    return get_store().reset()
+@app.post("/v1/board/start-fresh", response_model=StartFreshResponse, tags=["board"])
+def board_start_fresh(
+    body: StartFreshRequest,
+    session: dict = Depends(require_session),
+) -> StartFreshResponse:
+    """Clear board content only. Requires typed confirmation START FRESH. Session auth."""
+    from .store import START_FRESH_PHRASE
+
+    if body.confirmation.strip() != START_FRESH_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f'confirmation must be exactly "{START_FRESH_PHRASE}"',
+        )
+    actor = str(session.get("sub") or "session")
+    board, backup = get_store().start_fresh(actor=actor)
+    return StartFreshResponse(
+        board=board,
+        backup_path=backup,
+        message="board cleared — config, auth, jobs, and audit history preserved",
+    )
+
+
+@app.post("/v1/admin/reset-seed", response_model=Board, tags=["ops"])
+def admin_reset_seed(_a: str = Depends(require_owner)) -> Board:
+    """DEV ONLY: restore demo seed board. Unavailable when CASUAL_BOARD_ENV=production."""
+    settings = get_settings()
+    if settings.is_production:
+        raise HTTPException(status_code=403, detail="seed reset unavailable in production")
+    try:
+        return get_store().reset_to_seed_dev_only()
+    except RuntimeError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
 
 
 def run() -> None:

@@ -18,6 +18,7 @@ import { LearningCard } from "./LearningCard";
 import { BriefingCard } from "./BriefingCard";
 import { MachineCard } from "./MachineCard";
 import { ChatPanel } from "./ChatPanel";
+import { BoardSettings } from "./BoardSettings";
 import { ApiFailureBanner, type ApiFailureKind } from "./ApiFailureBanner";
 import { LoginPanel } from "./LoginPanel";
 
@@ -172,6 +173,14 @@ export function CasualBoard() {
           <LearningCard board={board} />
           <BriefingCard briefing={board.briefing} />
           <ChatPanel board={board} onBoard={setBoard} />
+          <BoardSettings
+            board={board}
+            onBoard={setBoard}
+            onAuthLost={() => {
+              setAuthed(false);
+              setAuthNote("Session expired — sign in again.");
+            }}
+          />
           <div className="min-[1100px]:hidden">
             <MachineCard machine={board.machine} />
           </div>

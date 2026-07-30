@@ -1,4 +1,4 @@
-"""Replaceable seed board — chef + Debian systems workflow."""
+"""Board factories: blank (default) and optional demo seed for local dev only."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from .models import (
     Board,
     BoardMeta,
     BoardStatus,
-    BriefingItem,
     BriefingSection,
     Freshness,
     ItemSource,
@@ -25,7 +24,73 @@ from .models import (
 )
 
 
+def build_blank_board(*, revision: int = 1, host_label: str = "casual-board") -> Board:
+    """Valid empty board — no demo content. Safe for production Start fresh."""
+    now = datetime.now(timezone.utc)
+    return Board(
+        meta=BoardMeta(
+            revision=max(1, revision),
+            generated_at=now,
+            updated_at=now,
+            host_label=host_label,
+            status=BoardStatus(label="ok · quiet", warnings=0, freshness=Freshness.fresh),
+        ),
+        today=TodaySection(
+            items=[],
+            empty_footer="empty — add routines, reminders, captures",
+            freshness=Freshness.fresh,
+        ),
+        media=MediaSection(
+            state=PlayState.idle,
+            current=None,
+            queue=[],
+            cassette=True,
+            volume=55,
+            playlist_label="",
+            playlist_url="",
+            speaker="—",
+            player="mpv",
+            fetcher="ytdl",
+            cassette_engine="ffmpeg cassette",
+            cassette_profile="",
+            cassette_repo="",
+            path_label="ytdl → mpv → out",
+            freshness=Freshness.unknown,
+            note="idle — no track; host transport not claimed verified",
+        ),
+        learning=LearningSection(
+            pool=[],
+            window_size=5,
+            ring=1,
+            topics_label="",
+            advance_ms=20_000,
+            freshness=Freshness.fresh,
+        ),
+        briefing=BriefingSection(
+            pins=[],
+            ring=[],
+            ring_index=0,
+            ring_n=1,
+            sources_label="",
+            advance_ms=5_000,
+            freshness=Freshness.fresh,
+        ),
+        machine=MachineSection(
+            host="awaiting-debian",
+            disk_pct=0.0,
+            free_gib=0.0,
+            failed_units=0,
+            net="wired",
+            apt_updates=0,
+            freshness=Freshness.unknown,
+            reported_at=None,
+            detail="awaiting a real Debian report (bridge/client)",
+        ).with_health(),
+    )
+
+
 def build_seed_board() -> Board:
+    """Demo chef + systems fixtures. Local development only — never Start fresh."""
     now = datetime.now(timezone.utc)
     recipe = RecipeSpine(
         one="Lemon & herb roast chicken, one tray",
@@ -124,88 +189,29 @@ def build_seed_board() -> Board:
                 detail="Only then call line open to the floor. First ticket is a systems test.",
                 tags=["line-opening", "open"],
             ),
-            LearningItem(
-                id="l4",
-                topic="allergen-matrix",
-                primary="Cross-contact is the silent fail: shared oil, same tongs, unlabelled tubs.",
-                detail="Separate utensils. Label every mise tub. Second-check new specials.",
-                tags=["allergen-matrix", "mise"],
-            ),
-            LearningItem(
-                id="l5",
-                topic="service-rescue",
-                primary="86'd mid-service: strike the board, tell floor once, offer equal-path sub.",
-                detail="Same allergen profile if possible, same price band, write sub on docket.",
-                tags=["service-rescue", "board"],
-            ),
-            LearningItem(
-                id="l6",
-                topic="line-opening",
-                primary="First ticket of the day is a fire drill, not a warm-up plate.",
-                detail="Time each hop: print → read → cook → pass → runner. Fix friction before rush.",
-                tags=["line-opening", "tickets"],
-            ),
         ],
         freshness=Freshness.fresh,
     )
+
+    from .models import BriefingItem
 
     briefing = BriefingSection(
         pins=[
             BriefingItem(
                 id="p1",
-                title="Morning light on the Pembrokeshire coast path — still empty at 7am",
-                url="https://x.com/explore",
-                source="x",
-            ),
-            BriefingItem(
-                id="p2",
-                title="Brief note on sleep debt and reaction time — useful for late service weeks",
-                url="https://x.com/explore",
-                source="x",
-            ),
-            BriefingItem(
-                id="p3",
-                title="A small delight: sourdough that finally holds its ear after 40 tries",
-                url="https://x.com/explore",
+                title="Demo pin — not for production",
+                url="https://example.com",
                 source="x",
             ),
         ],
         ring=[
             BriefingItem(
                 id="r1",
-                title="Show HN: offline-first kitchen ticket rail in ~400 lines of C",
-                url="https://news.ycombinator.com",
+                title="Demo ring item — not for production",
+                url="https://example.com",
                 source="hn",
-                points=214,
-                comments=89,
-            ),
-            BriefingItem(
-                id="r2",
-                title="Quiet thread on keeping a home lab boring on purpose",
-                url="https://x.com/explore",
-                source="x",
-            ),
-            BriefingItem(
-                id="r3",
-                title="Ask HN: personal ops board without it becoming a second job?",
-                url="https://news.ycombinator.com",
-                source="hn",
-                points=156,
-                comments=112,
-            ),
-            BriefingItem(
-                id="r4",
-                title="Cassette deck maintenance checklist — oddly satisfying",
-                url="https://x.com/explore",
-                source="x",
-            ),
-            BriefingItem(
-                id="r5",
-                title="HN: reading apt and systemd status without the noise",
-                url="https://news.ycombinator.com",
-                source="hn",
-                points=98,
-                comments=41,
+                points=1,
+                comments=0,
             ),
         ],
         freshness=Freshness.fresh,
@@ -220,21 +226,8 @@ def build_seed_board() -> Board:
         apt_updates=3,
         freshness=Freshness.stale,
         reported_at=None,
-        detail="awaiting debian-client report",
+        detail="demo seed machine — not a live report",
     ).with_health()
-
-    warnings = sum(1 for i in today.items if i.level == Level.warn)
-    if machine.warn:
-        warnings += 1
-    status = (
-        BoardStatus(
-            label=f"worth a look — {warnings} warnings",
-            warnings=warnings,
-            freshness=Freshness.fresh,
-        )
-        if warnings
-        else BoardStatus(label="ok · quiet", warnings=0, freshness=Freshness.fresh)
-    )
 
     return Board(
         meta=BoardMeta(
@@ -242,7 +235,7 @@ def build_seed_board() -> Board:
             generated_at=now,
             updated_at=now,
             host_label="casual-board",
-            status=status,
+            status=BoardStatus(label="ok · quiet", warnings=0, freshness=Freshness.fresh),
         ),
         today=today,
         media=media,

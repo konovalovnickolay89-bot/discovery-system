@@ -13,7 +13,6 @@ import type {
   CommandResponse,
   HealthResponse,
 } from "./board-types";
-import { FALLBACK_BOARD } from "./board-fallback";
 
 export class AuthError extends Error {
   constructor(message = "session expired") {
@@ -103,6 +102,20 @@ export async function postChat(message: string): Promise<ChatResponse> {
   return getJson<ChatResponse>(apiUrl("/v1/chat"), {
     method: "POST",
     body: JSON.stringify({ message, channel: "hermes", source: "web" }),
+  });
+}
+
+export type StartFreshResponse = {
+  board: Board;
+  backup_path: string | null;
+  message: string;
+};
+
+/** Destructive clear — must send confirmation phrase START FRESH (session only). */
+export async function postStartFresh(confirmation: string): Promise<StartFreshResponse> {
+  return getJson<StartFreshResponse>(apiUrl("/v1/board/start-fresh"), {
+    method: "POST",
+    body: JSON.stringify({ confirmation }),
   });
 }
 

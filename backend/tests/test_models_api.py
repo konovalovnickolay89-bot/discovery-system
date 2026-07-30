@@ -262,3 +262,108 @@ def test_chat_no_shell(client: TestClient):
     r = client.post("/v1/chat", headers=h, json={"message": "rm -rf /"})
     assert r.status_code == 200
     assert "shell" in r.json()["reply"].lower() or "allowlist" in r.json()["reply"].lower()
+
+
+def test_blank_board_factory():
+    from app.seed import build_blank_board
+
+    b = build_blank_board()
+    assert b.today.items == []
+    assert b.briefing.pins == []
+    assert b.briefing.ring == []
+    assert b.learning.pool == []
+    assert b.media.current is None
+    assert b.media.queue == []
+    assert b.media.state.value == "idle"
+    assert "awaiting" in (b.machine.detail or "").lower() or "awaiting" in b.machine.host
+    assert "chicken" not in b.model_dump_json().lower()
+    assert "show hn" not in b.model_dump_json().lower()
+
+
+def test_start_fresh_requires_auth_and_phrase(client: TestClient, tmp_path: Path):
+    # unauthenticated
+    r = client.post("/v1/board/start-fresh", json={"confirmation": "START FRESH"})
+    assert r.status_code == 401
+
+    h = session(client)
+    # wrong phrase
+    bad = client.post("/v1/board/start-fresh", headers=h, json={"confirmation": "please"})
+    assert bad.status_code == 400
+
+    # seed some content via capture
+    client.post(
+        "/v1/captures",
+        headers=h,
+        json={"note": "real capture to wipe", "use_ai": False},
+    )
+    before = client.get("/v1/board", headers=h).json()
+    assert len(before["today"]["items"]) >= 1
+    rev_before = before["meta"]["revision"]
+
+    # queue a host job so we can assert jobs preserved
+    job_r = client.post(
+        "/v1/commands",
+        headers=h,
+        json={
+            "command": "set_machine",
+            "payload": {"disk_pct": 10, "free_gib": 1, "net": "wired"},
+            "source": "web",
+        },
+    )
+    job_id = job_r.json()["job"]["id"]
+
+    # write a fake action line (audit)
+    actions = tmp_path / "actions.jsonl"
+    actions.write_text('{"id":"act-keep","command":"status","status":"completed","source":"web","actor":"t","payload":{},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}\n', encoding="utf-8")
+
+    ok = client.post(
+        "/v1/board/start-fresh",
+        headers=h,
+        json={"confirmation": "START FRESH"},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    board = body["board"]
+    assert board["today"]["items"] == []
+    assert board["briefing"]["pins"] == []
+    assert board["briefing"]["ring"] == []
+    assert board["learning"]["pool"] == []
+    assert board["media"]["current"] is None
+    assert board["media"]["queue"] == []
+    assert board["meta"]["revision"] > rev_before
+    assert "chicken" not in str(board).lower()
+    assert body["backup_path"]
+    assert Path(body["backup_path"]).is_file()
+
+    # jobs preserved
+    from app.jobs import get_job
+
+    assert get_job(job_id) is not None
+    # audit file still present
+    assert actions.is_file()
+    assert "act-keep" in actions.read_text()
+
+
+def test_seed_reset_blocked_or_dev_only(client: TestClient):
+    assert client.post("/v1/admin/reset-seed").status_code == 401
+    r = client.post("/v1/admin/reset-seed", headers=owner())
+    assert r.status_code == 200
+    assert len(r.json()["today"]["items"]) > 0
+
+    import os
+    from app.config import get_settings
+    from app.store import get_store
+
+    os.environ["CASUAL_BOARD_ENV"] = "production"
+    get_settings.cache_clear()
+    try:
+        raised = False
+        try:
+            get_store().reset_to_seed_dev_only()
+        except RuntimeError:
+            raised = True
+        assert raised, "seed reset must raise in production"
+        assert client.post("/v1/admin/reset-seed", headers=owner()).status_code == 403
+    finally:
+        os.environ["CASUAL_BOARD_ENV"] = "development"
+        get_settings.cache_clear()

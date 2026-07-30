@@ -218,7 +218,19 @@ class SessionResponse(BaseModel):
     expires_at: int
 
 
+class StartFreshRequest(BaseModel):
+    """Destructive board wipe. confirmation must be exactly START FRESH."""
+    confirmation: str = Field(min_length=1, max_length=64)
+
+
+class StartFreshResponse(BaseModel):
+    board: Board
+    backup_path: str | None = None
+    message: str = "board cleared"
+
+
 class CaptureRequest(BaseModel):
+
     note: str = Field(min_length=1, max_length=2000)
     source: ItemSource = ItemSource.web
     use_ai: bool = True

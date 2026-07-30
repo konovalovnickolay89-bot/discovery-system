@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,12 +13,14 @@ from typing import TYPE_CHECKING
 
 from .config import Settings, get_settings
 from .models import ActionRecord, Board, BoardStatus, Level, StreamEvent
-from .seed import build_seed_board
+from .seed import build_blank_board, build_seed_board
 
 if TYPE_CHECKING:
     from .models import BridgeJob
 
 log = logging.getLogger("casual_board.store")
+
+START_FRESH_PHRASE = "START FRESH"
 
 
 class BoardStore:
@@ -55,8 +58,8 @@ class BoardStore:
             try:
                 return Board.model_validate(json.loads(path.read_text(encoding="utf-8")))
             except Exception as e:  # noqa: BLE001
-                log.warning("board load failed: %s", e)
-        board = build_seed_board()
+                log.warning("board load failed: %s — starting blank", e)
+        board = build_blank_board()
         self._persist_board(board)
         return board
 
@@ -78,6 +81,51 @@ class BoardStore:
             event = StreamEvent(type="revision", revision=rev, at=now, board=board, detail=detail or None)
         self._emit(event)
         return board
+
+    def backup_board_file(self) -> Path | None:
+        path = self.settings.board_path
+        if not path.is_file():
+            return None
+        stamp = self._now().strftime("%Y%m%dT%H%M%SZ")
+        dest = self.settings.data_dir / f"board.backup-{stamp}.json"
+        shutil.copy2(path, dest)
+        return dest
+
+    def start_fresh(self, *, actor: str = "session") -> tuple[Board, str | None]:
+        with self._lock:
+            current = self.get()
+            backup = self.backup_board_file()
+            blank = build_blank_board(
+                revision=current.meta.revision + 1,
+                host_label=current.meta.host_label or "casual-board",
+            )
+            blank = self._recompute_status(blank)
+            now = self._now()
+            meta = blank.meta.model_copy(update={"updated_at": now, "generated_at": now})
+            blank = blank.model_copy(update={"meta": meta})
+            self._board = blank
+            self._persist_board(blank)
+            event = StreamEvent(
+                type="revision",
+                revision=blank.meta.revision,
+                at=now,
+                board=blank,
+                detail=f"start_fresh by {actor}",
+            )
+        self._emit(event)
+        log.info(
+            "start_fresh actor=%s revision=%s backup=%s",
+            actor,
+            blank.meta.revision,
+            backup,
+        )
+        return blank, str(backup) if backup else None
+
+    def reset_to_seed_dev_only(self) -> Board:
+        """Local/dev only — repopulates demo seed. Forbidden in production."""
+        if get_settings().is_production:
+            raise RuntimeError("seed reset unavailable in production")
+        return self.set(build_seed_board(), bump=True, detail="dev seed reset")
 
     def save_action(self, action: ActionRecord) -> ActionRecord:
         with self._lock:
@@ -128,9 +176,6 @@ class BoardStore:
             )
         )
 
-    def reset(self) -> Board:
-        return self.set(build_seed_board(), bump=True, detail="reset to seed")
-
     def subscribe_async(self) -> asyncio.Queue[StreamEvent]:
         q: asyncio.Queue[StreamEvent] = asyncio.Queue(maxsize=128)
         self._async_queues.append(q)
@@ -166,7 +211,6 @@ def get_store() -> BoardStore:
 
 
 def reset_store_for_tests(tmp_path: Path) -> BoardStore:
-    """Point store + sqlite at tmp_path and wipe jobs (isolated tests)."""
     global _store
     import os
 
