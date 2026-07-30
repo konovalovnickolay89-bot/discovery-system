@@ -55,14 +55,19 @@ function grLabel(s: string) {
   return s;
 }
 
-export function CookStudioCard({
+/** Full Cook Studio workspace — opened from Evolving Cook. */
+export function CookStudioWorkspace({
   onBoard,
   onAuthLost,
   liveTask,
+  initialConsultation = null,
+  embedded = false,
 }: {
   onBoard?: (b: Board) => void;
   onAuthLost?: () => void;
   liveTask?: Record<string, unknown> | null;
+  initialConsultation?: CookConsultation | null;
+  embedded?: boolean;
 }) {
   const [mode, setMode] = useState<(typeof MODES)[number]["id"]>("rescue");
   const [problem, setProblem] = useState("");
@@ -75,7 +80,7 @@ export function CookStudioCard({
   const [equipment, setEquipment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [active, setActive] = useState<CookConsultation | null>(null);
+  const [active, setActive] = useState<CookConsultation | null>(initialConsultation);
   const [history, setHistory] = useState<CookConsultation[]>([]);
   const [produce, setProduce] = useState<ProduceLot[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
@@ -106,6 +111,10 @@ export function CookStudioCard({
   useEffect(() => {
     void loadLib();
   }, [loadLib]);
+
+  useEffect(() => {
+    if (initialConsultation) setActive(initialConsultation);
+  }, [initialConsultation]);
 
   useEffect(() => {
     if (!liveTask?.id || typeof liveTask.id !== "string") return;
@@ -173,12 +182,16 @@ export function CookStudioCard({
   const plan = active?.local_safety_plan;
 
   return (
-    <section className="board-card" data-accent="green" aria-label="Cook Studio">
+    <section className="board-card" data-accent="green" aria-label="Cook Studio full">
       <div className="flex items-start justify-between gap-2">
         <h2 className="board-card-title" data-accent="green">
-          cook studio
+          {embedded ? "cook studio · full" : "cook studio"}
         </h2>
-        <button type="button" className="signout-btn" onClick={() => setDrawer(drawer === "closed" ? "produce" : "closed")}>
+        <button
+          type="button"
+          className="signout-btn"
+          onClick={() => setDrawer(drawer === "closed" ? "produce" : "closed")}
+        >
           {drawer === "closed" ? "stock · library" : "close library"}
         </button>
       </div>
@@ -324,7 +337,11 @@ export function CookStudioCard({
 
       <form className="mt-3 flex flex-col gap-2.5" onSubmit={(e) => void runConsult(e)}>
         <label className="ec-label" htmlFor="cs-problem">
-          {mode === "service" ? "Live problem" : mode === "develop" ? "Dish / direction" : "Ingredients or problem"}
+          {mode === "service"
+            ? "Live problem"
+            : mode === "develop"
+              ? "Dish / direction"
+              : "Ingredients or problem"}
         </label>
         <textarea
           id="cs-problem"
@@ -342,7 +359,11 @@ export function CookStudioCard({
         />
 
         <label className="ec-label">Traceability</label>
-        <select className="ec-input" value={trace} onChange={(e) => setTrace(e.target.value as typeof trace)}>
+        <select
+          className="ec-input"
+          value={trace}
+          onChange={(e) => setTrace(e.target.value as typeof trace)}
+        >
           {TRACE.map((t) => (
             <option key={t.value} value={t.value}>
               {t.label}
@@ -351,7 +372,11 @@ export function CookStudioCard({
         </select>
 
         <label className="ec-label">Service context</label>
-        <select className="ec-input" value={ctx} onChange={(e) => setCtx(e.target.value as typeof ctx)}>
+        <select
+          className="ec-input"
+          value={ctx}
+          onChange={(e) => setCtx(e.target.value as typeof ctx)}
+        >
           {CTX.map((t) => (
             <option key={t.value} value={t.value}>
               {t.label}
@@ -362,19 +387,39 @@ export function CookStudioCard({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="ec-label">Portions / covers</label>
-            <input className="ec-input" inputMode="numeric" value={portions} onChange={(e) => setPortions(e.target.value)} />
+            <input
+              className="ec-input"
+              inputMode="numeric"
+              value={portions}
+              onChange={(e) => setPortions(e.target.value)}
+            />
           </div>
           <div>
             <label className="ec-label">Time (min)</label>
-            <input className="ec-input" inputMode="numeric" value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+            <input
+              className="ec-input"
+              inputMode="numeric"
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+            />
           </div>
         </div>
 
         <label className="ec-label">Allergens</label>
-        <input className="ec-input" value={allergens} onChange={(e) => setAllergens(e.target.value)} placeholder="celery, gluten…" />
+        <input
+          className="ec-input"
+          value={allergens}
+          onChange={(e) => setAllergens(e.target.value)}
+          placeholder="celery, gluten…"
+        />
 
         <label className="ec-label">Equipment</label>
-        <input className="ec-input" value={equipment} onChange={(e) => setEquipment(e.target.value)} placeholder="combi, salamander…" />
+        <input
+          className="ec-input"
+          value={equipment}
+          onChange={(e) => setEquipment(e.target.value)}
+          placeholder="combi, salamander…"
+        />
 
         <label className="ec-label">Desired outcome</label>
         <input className="ec-input" value={outcome} onChange={(e) => setOutcome(e.target.value)} />
@@ -397,7 +442,8 @@ export function CookStudioCard({
               {active.mode} · {active.title}
             </div>
             <div className="meta-dim text-sm">
-              Task: {statusLabel(active.task_status)} · Kitchen memory: {grLabel(active.graph_recall_status)}
+              Task: {statusLabel(active.task_status)} · Kitchen memory:{" "}
+              {grLabel(active.graph_recall_status)}
             </div>
           </div>
 
@@ -495,7 +541,8 @@ export function CookStudioCard({
                   </ul>
                 ) : (
                   <p className="meta-dim m-0 text-sm">
-                    {active.graph_recall_status === "queued" || active.graph_recall_status === "leased"
+                    {active.graph_recall_status === "queued" ||
+                    active.graph_recall_status === "leased"
                       ? "Kitchen memory pending — local plan is ready."
                       : active.graph_recall_status === "failed"
                         ? "Kitchen memory unavailable — local plan only."
@@ -588,7 +635,7 @@ export function CookStudioCard({
       ) : null}
 
       <div className="board-card-footer">
-        safety local-first · Kitchen memory enriches only · Graph Recall not claimed live
+        full workspace · stock, dishes, history · Graph Recall not claimed live
       </div>
     </section>
   );

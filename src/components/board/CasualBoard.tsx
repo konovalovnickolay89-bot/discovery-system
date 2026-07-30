@@ -14,10 +14,9 @@ import { validateApiConfig } from "@/lib/api-config";
 import { HeaderBar } from "./HeaderBar";
 import { TodayCard } from "./TodayCard";
 import { MediaCard } from "./MediaCard";
-import { CookStudioCard } from "./CookStudioCard";
-import { CookActiveTasks } from "./CookActiveTasks";
+import { EvolvingCookCard } from "./EvolvingCookCard";
 import { LearningCard } from "./LearningCard";
-import { getConsultation, listConsultations } from "@/lib/cook-api";
+import { listConsultations, type CookConsultation } from "@/lib/cook-api";
 import { BriefingCard } from "./BriefingCard";
 import { MachineCard } from "./MachineCard";
 import { ChatPanel } from "./ChatPanel";
@@ -34,9 +33,10 @@ export function CasualBoard() {
   const [failureDetail, setFailureDetail] = useState<string | null>(null);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [authNote, setAuthNote] = useState<string | null>(null);
-  const [cookTasks, setCookTasks] = useState<any[]>([]);
+  const [cookTasks, setCookTasks] = useState<
+    Array<Partial<CookConsultation> & { id: string }>
+  >([]);
   const [liveCook, setLiveCook] = useState<Record<string, unknown> | null>(null);
-  const [focusCookId, setFocusCookId] = useState<string | null>(null);
 
   useEffect(() => {
     setAuthed(isSignedIn());
@@ -67,7 +67,7 @@ export function CasualBoard() {
         const active = await listConsultations(true);
         setCookTasks(active);
       } catch {
-        /* optional */
+        /* optional until cook API deployed */
       }
     } catch (e) {
       if (e instanceof AuthError) {
@@ -97,7 +97,7 @@ export function CasualBoard() {
         setCookTasks((prev) => {
           const id = String(task.id || "");
           const rest = prev.filter((x) => x.id !== id);
-          return [{ ...task }, ...rest].slice(0, 8);
+          return [{ ...task, id }, ...rest].slice(0, 8);
         });
       },
       onStatus: (s) => {
@@ -180,15 +180,6 @@ export function CasualBoard() {
       <div className="board-grid">
         <div className="board-col board-col-left flex flex-col gap-3.5">
           <TodayCard board={board} onBoard={setBoard} />
-          <CookActiveTasks
-            tasks={cookTasks}
-            onOpen={(id) => {
-              setFocusCookId(id);
-              void getConsultation(id)
-                .then((c) => setLiveCook(c as unknown as Record<string, unknown>))
-                .catch(() => undefined);
-            }}
-          />
           <MediaCard
             media={board.media}
             onMedia={(m: MediaSection) => setBoard((b) => ({ ...b, media: m }))}
@@ -199,9 +190,10 @@ export function CasualBoard() {
           </div>
         </div>
         <div className="board-col board-col-right flex flex-col gap-3.5">
-          <CookStudioCard
+          <EvolvingCookCard
             onBoard={setBoard}
             liveTask={liveCook}
+            activeTasks={cookTasks}
             onAuthLost={() => {
               setAuthed(false);
               setAuthNote("Session expired — sign in again.");
