@@ -35,3 +35,4 @@ screenshots/*.png
 # Legacy
 python/
 **/board.backup-*.json
+attachments/
