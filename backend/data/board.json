@@ -1,0 +1,362 @@
+{
+  "meta": {
+    "revision": 2,
+    "generated_at": "2026-07-29T23:40:13.622638Z",
+    "updated_at": "2026-07-29T23:40:15.443324Z",
+    "host_label": "casual-board",
+    "status": {
+      "label": "worth a look — 1 warnings",
+      "warnings": 1,
+      "freshness": "fresh"
+    }
+  },
+  "today": {
+    "items": [
+      {
+        "id": "t-open",
+        "text": "Open: walk-in temps, blast chill log, handwash stations",
+        "level": "info",
+        "tags": [
+          "routine"
+        ],
+        "url": null,
+        "detail": null,
+        "kind": "routine",
+        "source": "seed",
+        "recipe": null,
+        "expires_at": null,
+        "created_at": "2026-07-29T23:40:13.622638Z"
+      },
+      {
+        "id": "t-allergen",
+        "text": "11:30 — confirm allergen matrix print for lunch service",
+        "level": "warn",
+        "tags": [
+          "reminder",
+          "allergen"
+        ],
+        "url": null,
+        "detail": null,
+        "kind": "reminder",
+        "source": "seed",
+        "recipe": null,
+        "expires_at": null,
+        "created_at": "2026-07-29T23:40:13.622638Z"
+      },
+      {
+        "id": "t-capture",
+        "text": "Capture: try brown-butter sage on gnocchi next soft open",
+        "level": "info",
+        "tags": [
+          "capture"
+        ],
+        "url": null,
+        "detail": null,
+        "kind": "capture",
+        "source": "seed",
+        "recipe": null,
+        "expires_at": null,
+        "created_at": "2026-07-29T23:40:13.622638Z"
+      },
+      {
+        "id": "t-recipe",
+        "text": "Recipe pin · lemon & herb roast chicken",
+        "level": "info",
+        "tags": [
+          "recipe"
+        ],
+        "url": null,
+        "detail": null,
+        "kind": "recipe",
+        "source": "seed",
+        "recipe": {
+          "one": "Lemon & herb roast chicken, one tray",
+          "why": "Quiet service night — high yield, low fuss, parents-friendly",
+          "how": "Spatchcock · zest under skin · 210°C / 40 min · rest 12",
+          "roles": "Lead: roast / second: greens + jus / runner: carve station",
+          "mise_1": "Birds trussed · zest bowl · thyme oil · salt tray · thermometer",
+          "cost_portion": "£2.40 food · plate £11 · target 68% GP",
+          "watch": "Thigh joint probe 74°C · don't over-brown zest · hold carve warm",
+          "allergens": "None intrinsic · check bread crumb garnish if added",
+          "parents": "No chilli · soft greens option · carve away from bone if asked",
+          "service_pass": "Half bird + jus spoon · herb oil finish · lemon cheek on rim"
+        },
+        "expires_at": null,
+        "created_at": "2026-07-29T23:40:13.622638Z"
+      },
+      {
+        "id": "t-bf74544556",
+        "text": "Bridge test capture — bridge test capture",
+        "level": "info",
+        "tags": [
+          "capture"
+        ],
+        "url": null,
+        "detail": "bridge test capture",
+        "kind": "capture",
+        "source": "capture",
+        "recipe": null,
+        "expires_at": null,
+        "created_at": "2026-07-29T23:40:15.443217Z"
+      }
+    ],
+    "empty_footer": "routine.json is empty — add your day's shape",
+    "freshness": "fresh"
+  },
+  "media": {
+    "state": "idle",
+    "current": {
+      "id": "m0",
+      "title": "Late Ferry Home",
+      "artist": "Quiet Harbour",
+      "yt_id": "demo0",
+      "duration_s": 312,
+      "url": null
+    },
+    "queue": [
+      {
+        "id": "m1",
+        "title": "Cassette Dust",
+        "artist": "Tape Room",
+        "yt_id": null,
+        "duration_s": 248,
+        "url": null
+      },
+      {
+        "id": "m2",
+        "title": "Kitchen After Close",
+        "artist": "Line Down",
+        "yt_id": null,
+        "duration_s": 401,
+        "url": null
+      },
+      {
+        "id": "m3",
+        "title": "Soft Grid Rain",
+        "artist": "Signal Low",
+        "yt_id": null,
+        "duration_s": 276,
+        "url": null
+      },
+      {
+        "id": "m4",
+        "title": "Sunday Prep",
+        "artist": "Mise en Place",
+        "yt_id": null,
+        "duration_s": 334,
+        "url": null
+      }
+    ],
+    "cassette": true,
+    "volume": 55,
+    "playlist_label": "CHILLOUT MUSIC 2026",
+    "playlist_url": "https://www.youtube.com/playlist?list=PLchillout2026",
+    "speaker": "speaker up",
+    "player": "mpv",
+    "fetcher": "ytdl",
+    "cassette_engine": "ffmpeg cassette",
+    "cassette_profile": "chrome-type-ii",
+    "cassette_repo": "AARomanov1985/Audio-Cassette-Simulation",
+    "path_label": "ytdl → mpv → ffmpeg cassette → out",
+    "freshness": "unknown",
+    "note": "mirror only — real transport on Debian client"
+  },
+  "learning": {
+    "pool": [
+      {
+        "id": "l1",
+        "topic": "allergen-matrix",
+        "primary": "14 major allergens must be presentable from the pass without guessing.",
+        "detail": "Walk the matrix at open. Mark dish changes in red pen. Never improvise mid-service.",
+        "tags": [
+          "allergen-matrix",
+          "pass"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      },
+      {
+        "id": "l2",
+        "topic": "service-rescue",
+        "primary": "When a table goes quiet-angry: acknowledge, own one fix, give a time, deliver.",
+        "detail": "Script once, close the loop yourself. Manager only if guest asks or fix fails.",
+        "tags": [
+          "service-rescue",
+          "front"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      },
+      {
+        "id": "l3",
+        "topic": "line-opening",
+        "primary": "Line open is a checklist: temps, stock, tools, taste, tickets.",
+        "detail": "Only then call line open to the floor. First ticket is a systems test.",
+        "tags": [
+          "line-opening",
+          "open"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      },
+      {
+        "id": "l4",
+        "topic": "allergen-matrix",
+        "primary": "Cross-contact is the silent fail: shared oil, same tongs, unlabelled tubs.",
+        "detail": "Separate utensils. Label every mise tub. Second-check new specials.",
+        "tags": [
+          "allergen-matrix",
+          "mise"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      },
+      {
+        "id": "l5",
+        "topic": "service-rescue",
+        "primary": "86'd mid-service: strike the board, tell floor once, offer equal-path sub.",
+        "detail": "Same allergen profile if possible, same price band, write sub on docket.",
+        "tags": [
+          "service-rescue",
+          "board"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      },
+      {
+        "id": "l6",
+        "topic": "line-opening",
+        "primary": "First ticket of the day is a fire drill, not a warm-up plate.",
+        "detail": "Time each hop: print → read → cook → pass → runner. Fix friction before rush.",
+        "tags": [
+          "line-opening",
+          "tickets"
+        ],
+        "level": "info",
+        "source": "seed",
+        "url": null
+      }
+    ],
+    "window_size": 5,
+    "ring": 1,
+    "topics_label": "allergen-matrix + service-rescue + line-opening",
+    "advance_ms": 20000,
+    "freshness": "fresh"
+  },
+  "briefing": {
+    "pins": [
+      {
+        "id": "p1",
+        "title": "Morning light on the Pembrokeshire coast path — still empty at 7am",
+        "url": "https://x.com/explore",
+        "source_tag": "x",
+        "points": null,
+        "comments": null,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "p2",
+        "title": "Brief note on sleep debt and reaction time — useful for late service weeks",
+        "url": "https://x.com/explore",
+        "source_tag": "x",
+        "points": null,
+        "comments": null,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "p3",
+        "title": "A small delight: sourdough that finally holds its ear after 40 tries",
+        "url": "https://x.com/explore",
+        "source_tag": "x",
+        "points": null,
+        "comments": null,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      }
+    ],
+    "ring": [
+      {
+        "id": "r1",
+        "title": "Show HN: offline-first kitchen ticket rail in ~400 lines of C",
+        "url": "https://news.ycombinator.com",
+        "source_tag": "hn",
+        "points": 214,
+        "comments": 89,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "r2",
+        "title": "Quiet thread on keeping a home lab boring on purpose",
+        "url": "https://x.com/explore",
+        "source_tag": "x",
+        "points": null,
+        "comments": null,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "r3",
+        "title": "Ask HN: personal ops board without it becoming a second job?",
+        "url": "https://news.ycombinator.com",
+        "source_tag": "hn",
+        "points": 156,
+        "comments": 112,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "r4",
+        "title": "Cassette deck maintenance checklist — oddly satisfying",
+        "url": "https://x.com/explore",
+        "source_tag": "x",
+        "points": null,
+        "comments": null,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      },
+      {
+        "id": "r5",
+        "title": "HN: reading apt and systemd status without the noise",
+        "url": "https://news.ycombinator.com",
+        "source_tag": "hn",
+        "points": 98,
+        "comments": 41,
+        "level": "info",
+        "detail": null,
+        "item_source": "seed"
+      }
+    ],
+    "ring_index": 0,
+    "ring_n": 1,
+    "sources_label": "x + hn",
+    "advance_ms": 5000,
+    "freshness": "fresh"
+  },
+  "machine": {
+    "host": "debian-minimal",
+    "disk_pct": 42.0,
+    "free_gib": 118.4,
+    "failed_units": 0,
+    "net": "wired",
+    "apt_updates": 3,
+    "warn": false,
+    "detail": "awaiting debian-client report",
+    "freshness": "stale",
+    "reported_at": null
+  }
+}

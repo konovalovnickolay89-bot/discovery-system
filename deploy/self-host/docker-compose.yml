@@ -1,0 +1,26 @@
+# Free self-host: run API on a machine you control.
+# Put Cloudflare Tunnel (or Caddy) in front for HTTPS/WSS.
+# Do NOT publish port 8090 to the public internet raw.
+
+services:
+  casual-board-api:
+    build:
+      context: ../..
+      dockerfile: deploy/self-host/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production.example
+    environment:
+      CASUAL_BOARD_ENV: production
+      CASUAL_BOARD_HOST: 0.0.0.0
+      CASUAL_BOARD_PORT: 8090
+      CASUAL_BOARD_DATA_DIR: /data
+      CASUAL_BOARD_TRUST_PROXY: "true"
+      CASUAL_BOARD_CORS_ORIGINS: https://discovery-system.grok.me
+    volumes:
+      - casual_board_data:/data
+    ports:
+      - "127.0.0.1:8090:8090"
+
+volumes:
+  casual_board_data:

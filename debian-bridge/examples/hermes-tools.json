@@ -1,0 +1,95 @@
+{
+  "name": "casual-board-bridge",
+  "description": "Linux-Wiki / Hermes administration profile for Casual Board (outbound only)",
+  "base_url_env": "CASUAL_BOARD_API_URL",
+  "auth": {
+    "header": "Authorization",
+    "scheme": "Bearer",
+    "token_env": "CASUAL_BOARD_TOKEN"
+  },
+  "notes": [
+    "Debian never accepts public inbound connections for this bridge.",
+    "System-changing actions (set_machine, set_media, remove_today) set require_approval=true.",
+    "No unrestricted shell — only allowlisted commands."
+  ],
+  "allowlist": [
+    "status",
+    "capture",
+    "add_today",
+    "remove_today",
+    "set_media",
+    "set_machine"
+  ],
+  "tools": [
+    {
+      "name": "board_status",
+      "method": "POST",
+      "path": "/v1/commands",
+      "body": {
+        "command": "status",
+        "source": "bridge",
+        "actor": "hermes",
+        "payload": {}
+      }
+    },
+    {
+      "name": "board_capture",
+      "method": "POST",
+      "path": "/v1/commands",
+      "body": {
+        "command": "capture",
+        "source": "bridge",
+        "actor": "hermes",
+        "payload": { "note": "{{note}}" }
+      }
+    },
+    {
+      "name": "board_add_today",
+      "method": "POST",
+      "path": "/v1/commands",
+      "body": {
+        "command": "add_today",
+        "source": "bridge",
+        "actor": "hermes",
+        "payload": { "text": "{{text}}", "kind": "reminder" }
+      }
+    },
+    {
+      "name": "board_remove_today",
+      "method": "POST",
+      "path": "/v1/commands",
+      "body": {
+        "command": "remove_today",
+        "source": "bridge",
+        "actor": "hermes",
+        "require_approval": true,
+        "payload": { "id": "{{id}}" }
+      }
+    },
+    {
+      "name": "board_set_machine",
+      "method": "POST",
+      "path": "/v1/commands",
+      "body": {
+        "command": "set_machine",
+        "source": "bridge",
+        "actor": "hermes",
+        "require_approval": true,
+        "payload": {
+          "disk_pct": "{{disk_pct}}",
+          "free_gib": "{{free_gib}}",
+          "failed_units": "{{failed_units}}",
+          "net": "{{net}}",
+          "apt_updates": "{{apt_updates}}",
+          "host": "{{host}}"
+        }
+      }
+    },
+    {
+      "name": "board_approve_action",
+      "method": "POST",
+      "path": "/v1/actions/{{action_id}}/approval",
+      "body": { "approve": true, "note": "hermes approved" }
+    }
+  ]
+}

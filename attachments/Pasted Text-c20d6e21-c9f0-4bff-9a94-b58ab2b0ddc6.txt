@@ -1,0 +1,65 @@
+Build a polished, calm personal CLI-inspired web dashboard called “Casual Board”.
+
+Audience: one person (chef + systems tinkerer). Feel: quiet, dense, legible — like a well-designed terminal board brought to the web. Not a busy SaaS admin, not a news firehose homepage.
+
+## Visual system
+- Dark theme, near-black background, soft borders, monospace for titles/footers optional; clean sans for body.
+- Section accent colours (left border or title chip only — not loud fills):
+  - today + media: warm peach/coral
+  - learning: green
+  - briefing: purple
+  - machine: blue
+- Levels: info (default), warn (amber), highlight (rare, one max if used), dim (muted).
+- Tags as small chips: hn, x, capture, yt, idle, recipe, etc.
+- URLs under pin/item text when present; never hide links.
+- Subtle card chrome, rounded but not “bubbly”. Generous line-height. No stock illustration fluff.
+
+## Layout
+Wide (≥1100px): two columns
+  LEFT (narrower ~40%): today → media → machine (machine can be a slim status strip at bottom of left or full page footer)
+  RIGHT (~60%): learning (~¾ visual weight) → briefing
+Narrow: single column, same order: today, media, learning, briefing, machine.
+
+Header bar: local time · host label “debian-minimal” · relative “updated” · quiet status (“ok · quiet” or “worth a look — N warnings”).
+
+## Cards / sections
+
+### 1) today (peach)
+- Purpose: routine + reminders + journal “capture” opens only.
+- NEVER put news, X, HN, kanban, or study modules here.
+- Empty state footer is fine: “routine.json is empty — add your day's shape”.
+- Optional recipe block: if a recipe pin exists, show it ALWAYS fully expanded with a spine of short labeled lines (not collapsed):
+  ONE → WHY → HOW → ROLES → MISE 1 → COST/portion → WATCH → ALLERGENS → PARENTS → SERVICE/PASS
+  No SCALE, no CANTEEN bulk, no MISE-for-10.
+
+### 2) media (peach, under today)
+- Downtempo / chill playlist status.
+- Show: play state (idle/playing/paused), current track title, short queue (4–5 tracks), footer like:
+  “CHILLOUT MUSIC 2026 · speaker up · cassette on · volume 55”
+- Controls (UI only is fine for demo): Play / Pause / Next / Stop / Cassette toggle.
+- Cassette = subtle “tape” vibe badge when on (wow/flutter sim is host-side; web just shows state).
+
+### 3) learning (green) — PRIMARY study surface
+- Rotating pool of culinary/service learning rows.
+- Show 5 items at a time; each primary line can wrap ~5 lines; detail ALWAYS expanded under the row (never collapsed-only titles).
+- Primary line colour: amber/yellow; chrome/border stays green even when card unfocused.
+- Footer: “ring N · topic-a + topic-b · i–j of N ↻”
+- Auto-advance the window every 20s (pause on hover).
+- Seed topics: allergen-matrix, service-rescue, line-opening — grounded kitchen SOPs, not fluff.
+
+### 4) briefing (purple) — calm news
+- Top: up to 3 curated PINS (always visible), each with full wrap + URL underneath. No ring footer mixed into the pins block.
+- Divider, then rotating RING of 5 headlines.
+- Tags on items: source-only `hn` or `x` (never put internal lane names out/fact/fun on disk/UI tags).
+- Dim secondary meta like “· 41 pts · 36 c” when present.
+- Footer: “ring N · x + hn · i–j of N ↻”
+- Ring interval ~5s (pause on hover).
+- Pins example mix: one nature/place (x), one useful science/health (x), one light delight (x).
+- Ring mix: interleave some x among hn so X doesn’t vanish.
+
+### 5) machine (blue)
+- Compact host vitals footer/card: disk %, free GiB, failed units, net (wired/wifi), apt updates count.
+- Warn styling only when unhealthy; silence when fine.
+- Optional expandable detail rows later (apt list) — not required v1.
+
+## Interaction

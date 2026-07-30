@@ -1,0 +1,25 @@
+[Unit]
+Description=Casual Board FastAPI (authoritative board for discovery-system.grok.me)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=casual
+Group=casual
+EnvironmentFile=/etc/casual-board.env
+WorkingDirectory=/opt/casual-board/backend
+ExecStart=/opt/casual-board/backend/.venv/bin/python -m uvicorn app.main:app \
+  --host ${CASUAL_BOARD_HOST} \
+  --port ${CASUAL_BOARD_PORT} \
+  --proxy-headers \
+  --forwarded-allow-ips='*'
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/casual-board
+
+[Install]
+WantedBy=multi-user.target

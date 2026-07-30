@@ -1,0 +1,20 @@
+[Unit]
+Description=Casual Board API (web + CLI + Hermes)
+After=network.target
+
+[Service]
+Type=simple
+User=casual
+Group=casual
+EnvironmentFile=-/etc/casual-board.env
+WorkingDirectory=/opt/casual-board/python
+ExecStart=/opt/casual-board/python/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8090
+Restart=on-failure
+RestartSec=2
+
+# Hardening (adjust as needed)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

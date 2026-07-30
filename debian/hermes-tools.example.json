@@ -1,0 +1,72 @@
+{
+  "name": "casual-board",
+  "description": "Administer Casual Board on debian-minimal",
+  "base_url": "http://127.0.0.1:8090",
+  "auth": {
+    "header": "Authorization",
+    "value_from_env": "CASUAL_BOARD_TOKEN",
+    "scheme": "Bearer"
+  },
+  "tools": [
+    {
+      "name": "board_status",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": { "action": "status", "agent": "hermes" }
+    },
+    {
+      "name": "board_ping",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": { "action": "ping", "agent": "hermes" }
+    },
+    {
+      "name": "board_add_today",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": {
+        "action": "add_today",
+        "agent": "hermes",
+        "payload": { "text": "{{text}}", "kind": "reminder" }
+      }
+    },
+    {
+      "name": "board_capture",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": {
+        "action": "capture",
+        "agent": "hermes",
+        "payload": { "note": "{{note}}" }
+      }
+    },
+    {
+      "name": "board_set_machine",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": {
+        "action": "set_machine",
+        "agent": "hermes",
+        "payload": {
+          "disk_pct": "{{disk_pct}}",
+          "free_gib": "{{free_gib}}",
+          "failed_units": "{{failed_units}}",
+          "apt_updates": "{{apt_updates}}",
+          "net": "{{net}}"
+        }
+      }
+    },
+    {
+      "name": "board_media",
+      "method": "POST",
+      "path": "/api/media/command",
+      "body": { "command": "{{command}}", "source": "hermes" }
+    },
+    {
+      "name": "board_reset",
+      "method": "POST",
+      "path": "/api/hermes",
+      "body": { "action": "reset_board", "agent": "hermes" }
+    }
+  ]
+}

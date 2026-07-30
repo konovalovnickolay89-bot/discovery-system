@@ -1,0 +1,12 @@
+[project]
+name = "casual-board-debian-bridge"
+version = "0.1.0"
+description = "Outbound-only Hermes/Linux-Wiki bridge for Casual Board"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pydantic>=2.10",
+]
+
+[project.scripts]
+casual-board-bridge = "casual_board_bridge.main:main"
