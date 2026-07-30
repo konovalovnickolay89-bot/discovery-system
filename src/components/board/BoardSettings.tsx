@@ -4,6 +4,20 @@ import { AuthError, postStartFresh } from "@/lib/board-api";
 
 const PHRASE = "START FRESH";
 
+function friendlyError(raw: string): string {
+  const t = raw.toLowerCase();
+  if (t.includes("not found") || t.includes("404")) {
+    return (
+      "API is still an older build (no /v1/board/start-fresh). " +
+      "On Debian: git pull (commit 007c442+) and restart casual-board-api."
+    );
+  }
+  if (t.includes("confirmation")) {
+    return `Type exactly ${PHRASE} (all caps, one space).`;
+  }
+  return raw;
+}
+
 export function BoardSettings({
   board,
   onBoard,
@@ -32,7 +46,7 @@ export function BoardSettings({
       onBoard(res.board);
       setOk(
         res.message +
-          (res.backup_path ? ` · backup saved` : "") +
+          (res.backup_path ? " · backup saved on API host" : "") +
           ` · rev ${res.board.meta.revision}`,
       );
       setPhrase("");
@@ -41,7 +55,7 @@ export function BoardSettings({
         onAuthLost?.();
         return;
       }
-      setError(ex instanceof Error ? ex.message : "start fresh failed");
+      setError(friendlyError(ex instanceof Error ? ex.message : "start fresh failed"));
     } finally {
       setBusy(false);
     }
